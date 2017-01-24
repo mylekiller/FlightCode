@@ -9,7 +9,7 @@
   * Datalogging capacity (untested)
   * Running-average calcs for critical sensor values and Simpson's Rule integration of gyro data
   * Multi-sensor verification of flight progress switch-case transitions (untested)
-  * Github Sync system working?
+  * Github Sync system working
  * 
  * To-dos:
   * Figure out what the ground station will be transmitting and configure the receiver accordingly
