@@ -1,6 +1,13 @@
 /*
- * Notre Dame Rocket Team Roll Control Payload Master Code V. 0.8.0
- * Aidan McDonald, 1/12/17
+ * Notre Dame Rocket Team Roll Control Payload Master Code V. 0.8.2
+ * Aidan McDonald, 2/1/17
+ * 
+ * Most recent changes:
+ * Moved GPS enabling to post-burnout
+ * Reconfigured transmitter code to send different sensor data at different points in the flight
+ * Configured packet transmission to create a standard data set and interpretive flags for the receiver code to use
+ * Modified the gpsDataFlag to be a generic flag set if data is saved, until the GPS is enabled, in which case it reverts to its old role.
+ * 
  * To-dones:
   * Basic switch-case structure
   * Incorporation of Adafruit sensor code
@@ -13,6 +20,7 @@
  * 
  * To-dos:
   * Figure out what the ground station will be transmitting and configure the receiver accordingly
+  * Figure out what data the payload transmits pre-burnout
   * Revise and enhance the staging/thresholds, particularly burnout/apogee accel values
   * Reconfigure the SD datalogging section to allow for easy spreadsheet conversion
   * Figure out what data format/size the Adafruit sensors use, and fix the code accordingly
@@ -26,7 +34,6 @@
  * Receive from ground station:
     *  GPS Sleep
     *  Fin Override (only to home)
-    *  Report back GPS data, fin position
  * 
  */
 
@@ -75,11 +82,11 @@ unsigned long timeStepAverage; //Averages of the above buffer values
 
 float gpsLatitude = 0;
 float gpsLongitude = 0;
-float gpsAltitude = 0;
-char gpsLatDirect = 'N';
-char gpsLonDirect = 'E';
-int gpsFix = 0;
-int gpsFixQuality = 0; //Variables to store GPS data between the SD and radio functions
+float gpsAltitude = -1;
+char gpsLatDirect = 'A';
+char gpsLonDirect = 'B';
+int gpsFix = -1;
+int gpsFixQuality = -1; //Variables to store GPS data between the SD and radio functions
 
 //Constants/values for sensor calibration
 const float seaLevelPressure = SENSORS_PRESSURE_SEALEVELHPA; //Default value of 1013.25 hPa, needs calibration!
@@ -111,14 +118,16 @@ const int MIN_ROLL_THRESHOLD = 0;
 
 bool startRollFlag = false;
 bool endRollFlag = false; //Flags for tracking roll/counter-roll progress
-bool finState; //Variable for tracking current fin position
+bool finState = false; //Variable for tracking current fin position
+bool servoOnFlag;
+bool servoHomeFlag; //Two flags to keep track of the other two digital outputs to the servo. ALWAYS CHANGE THESE WHEN CHANGING SERVO OUTPUTS!
 
 float rotationCounter = 0; //Variable for tracking rotation, in revolutions
 
 bool sendFlag = true; //Flag for toggling send/receive mode; makes 2-way communication much easier
 bool radioWorkingFlag = true; //Flag to determine if radio initialized properly. If not, then it continues on without comms
-bool gpsDataFlag = false; //Since SD saving and radio transmission occur in two different functions, the SD routine uses this flag to tell the radio routine if data is ready for transmission
-
+bool dataFlag = false; //Since SD saving and radio transmission occur in two different functions, the SD routine uses this flag to tell the radio routine if data is ready for transmission
+bool gpsOnFlag = false; //Flag to track whether GPS is currently operating/enabled
 
 
 void setup() {
@@ -135,12 +144,10 @@ void setup() {
   gyro.begin(); 
   SD.begin(cardSelectPin);//Initialize the sensors and SD card
   
-  GPS.begin(9600); //Initialize GPS; define output set and data rate
-  GPS.sendCommand(PMTK_SET_NMEA_OUTPUT_RMCGGA);
-  GPS.sendCommand(PMTK_SET_NMEA_UPDATE_1HZ);
-  
   digitalWrite(controlPin, HIGH); //Enable servo
+  servoOnFlag = true;
   digitalWrite(homePin, HIGH); //Set servo to "home" position
+  servoHomeFlag = true;
 
   //Manual radio reset
   digitalWrite(RFM95_RST, LOW);
@@ -174,6 +181,7 @@ void loop() {
   gyro.getEvent(&mainEvent);
   accel.getEvent(&mainEvent); // Assume Z-axis is vertical for accel/gyro?
   bmp.getEvent(&mainEvent);
+  if(gpsOnFlag)
   char c = GPS.read(); //Must call GPS.read() at some point for data transmission to occur
 
   if(startTime != 0)
@@ -215,6 +223,10 @@ Roll_Control(mainEvent);
 if(accelAverage > APOGEE_ACCEL_THRESHOLD || flightTime > APOGEE_TIME_THRESHOLD) //Add a baro test here?
 {
   flightState = falling;
+  GPS.begin(9600); //Initialize GPS; define output set and data rate
+  GPS.sendCommand(PMTK_SET_NMEA_OUTPUT_RMCGGA);
+  GPS.sendCommand(PMTK_SET_NMEA_UPDATE_1HZ);
+  gpsOnFlag = true;
 }
 break;
 
@@ -237,6 +249,7 @@ void Roll_Control(sensors_event_t event) {
 
   if(!startRollFlag) { //For roll initialization, cant fins in the direction of current roll
     digitalWrite(homePin, LOW);
+    servoHomePin = false;
     startRollFlag = true;
     if(event.gyro.z > 0) {
       digitalWrite(statePin, HIGH);
@@ -259,16 +272,19 @@ void Roll_Control(sensors_event_t event) {
     if(abs(event.gyro.z) < MIN_ROLL_THRESHOLD)
     {
       digitalWrite(homePin, HIGH);
+      servoHomePin = true;
     }
     else if(event.gyro.z > 0)
       {
       digitalWrite(homePin, LOW);
+      servoHomePin = false;
       digitalWrite(statePin, LOW);
       finState = false;
       }
     else if(event.gyro.z < 0)
       {
       digitalWrite(homePin, LOW);
+      servoHomePin = false;
       digitalWrite(statePin, HIGH);
       finState = true;
       }
@@ -296,10 +312,15 @@ bmp.getTemperature(&temperature);
   timeData[0] = millis();
   timeData[1] = millis() - startTime;
 
-if(GPS.newNMEAreceived()) { //Update GPS data if an update is available
+if(!gpsOnFlag) {
+  dataFlag = true; //If the GPS isn't on yet, set the dataFlag to true automatically
+}
+  
+
+if(GPS.newNMEAreceived() && gpsOnFlag) { //Update GPS data if an update is available
   if (!GPS.parse(GPS.lastNMEA())) // this sets the newNMEAreceived() flag to false; prevents double(+)-update loop
       return;
-      gpsDataFlag = true; //Set flag to tell radio new data is ready
+      dataFlag = true; //Set flag to tell radio new data is ready
 gpsLatitude = GPS.latitude;
 gpsLongitude = GPS.longitude;
 gpsAltitude = GPS.altitude;
@@ -356,44 +377,78 @@ dataLog.print(gpsFixQuality);
 
 void Radio_Transmit(void) {
 
-if(gpsDataFlag && sendFlag) //Send data mode, only if GPS is ready
+if(dataFlag && sendFlag) //Send data mode, only if GPS is ready
   {
-      gpsDataFlag = false; //Only turn off this flag if Arduino is actively sending GPS data
+      dataFlag = false; //Only turn off this flag if Arduino is actively sending data
       sendFlag = false; //Once we send data, wait for data to be received
       
-      uint8_t radioPacket[27]; //Buffer of bytes for radio transmission
+      uint8_t radioPacket[19]; //Buffer of bytes for radio transmission
+      int packetSize = 19; //Depending on the flight state, the actual packet size may change
+
+      radioPacket[0] = flightState; //Start every packet with the current flight staging (lets the receiver know what data is going to come at the end of the packet)
+      radioPacket[1] = servoOnPin;
+      radioPacket[2] = servoHomePin; //The next three items in each packet report the outputs to the servo.
+      radioPacket[3] = finState;
 
 union{ //Float-to-byte-string converter, needed for GPS data
   float tempFloat;
   byte tempArray[3];
 } u;
 
+if(flightState > burnout)
+{
 u.tempFloat = gpsLatitude;
 for(int c=0; c<4; c++){
-  radioPacket[c] = u.tempArray[c];
+  radioPacket[c+4] = u.tempArray[c];
 }
 radioPacket[4] = gpsLatDirect; //N or S
 u.tempFloat = gpsLongitude;
 for(int c=0; c<4; c++){
-  radioPacket[(c+5)] = u.tempArray[c];
+  radioPacket[(c+9)] = u.tempArray[c];
 }
 radioPacket[9] = gpsLonDirect; //E or W
 u.tempFloat = gpsAltitude;
 for(int c=0; c<4; c++){
-  radioPacket[(c+10)] = u.tempArray[c];
+  radioPacket[(c+14)] = u.tempArray[c];
 }
-radioPacket[14] = gpsFix;
-radioPacket[15] = gpsFixQuality; //Useful for determining valid/invalid GPS data; if fix or quality are 0 the data isn't reliable
-
-for(int c=0; c<3; c++) {
-  radioPacket[c+16] = accelData[c];
-  radioPacket[c+19] = gyroData[c];
-  radioPacket[c+22] = baroData[c];
+radioPacket[18] = gpsFix;
+radioPacket[19] = gpsFixQuality; //Useful for determining valid/invalid GPS data; if fix or quality are 0 the data isn't reliable
 }
-radioPacket[25] = timeData[0];
-radioPacket[26] = timeData[1];
 
-rf95.send((uint8_t *)radioPacket, 27); //Once packet has been constructed, transmit
+else if(flightState = burnout) {
+
+  radioPacket[4] = endRollFlag; //If we're in burnout, send the "end roll flag." It determines whether we send the running tally (float) or the current rotation speed (int)
+if(endRollFlag) {
+union { //Since we're sending an integer, we need a different-sized memory union to work with
+  int tempInt;
+  byte tempArray[1];
+} uInt;
+
+uInt.tempInt = gyroData[2]; //Remember: THIS ASSUMES Z-AXIS IS VERTICAL!!!
+radioPacket[5] = tempArray[0];
+radioPacket[6] = tempArray[1]; 
+packetSize = 6;
+}
+
+else {
+  u.tempFloat = rotationCounter;
+for(int c=0; c<4; c++){
+  radioPacket[(c+5)] = u.tempArray[c];
+}
+packetSize = 8;
+}
+
+}
+
+else { //If we're not in the burnout phase yet, then send... what?
+
+
+  
+}
+
+
+
+rf95.send((uint8_t *)radioPacket, packetSize); //Once packet has been constructed, transmit
 rf95.waitPacketSent(); //Short, necessary wait for packet transmission to complete
   }
 
