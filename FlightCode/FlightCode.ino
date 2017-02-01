@@ -1,12 +1,10 @@
 /*
- * Notre Dame Rocket Team Roll Control Payload Master Code V. 0.8.2
+ * Notre Dame Rocket Team Roll Control Payload Master Code V. 0.8.3
  * Aidan McDonald, 2/1/17
  * 
  * Most recent changes:
- * Moved GPS enabling to post-burnout
- * Reconfigured transmitter code to send different sensor data at different points in the flight
- * Configured packet transmission to create a standard data set and interpretive flags for the receiver code to use
- * Modified the gpsDataFlag to be a generic flag set if data is saved, until the GPS is enabled, in which case it reverts to its old role.
+ * Fixed some errors with variable names
+ * Reconfigured the Adafruit sensor variable types
  * 
  * To-dones:
   * Basic switch-case structure
@@ -19,11 +17,14 @@
   * Github Sync system working
  * 
  * To-dos:
+ *  THE CODE IS ALREADY TOO BIG!!!!!
+      *  This is a pretty serious problem, considering there is still a significant amount of code that needs to be written. Part of the problem is that the
+      *  Adafruit flight controller uses four different libraries, each of which eats up memory space. Maybe replace our flight sensor package? Otherwise,
+      *  we're going to need to severely ramp down the scale of our operations...
   * Figure out what the ground station will be transmitting and configure the receiver accordingly
   * Figure out what data the payload transmits pre-burnout
   * Revise and enhance the staging/thresholds, particularly burnout/apogee accel values
   * Reconfigure the SD datalogging section to allow for easy spreadsheet conversion
-  * Figure out what data format/size the Adafruit sensors use, and fix the code accordingly
   * TEST EVERYTHING
   * NO REALLY, EVERYTHING
    *  Ada Sensors
@@ -66,14 +67,14 @@ Adafruit_GPS GPS(&GPSSerial); //Construct instance of the GPS object
 //Constants for SD Card communication
 const int cardSelectPin = 53; //Standard for ATMega; other SPI comms pins are 50-52
 File dataLog; //File to log flight data
-byte accelData[3];
-byte gyroData[3];
-byte baroData[3]; //Char buffers for storing sensor data
+int accelData[3];
+int gyroData[3];
+float baroData[3]; //Char buffers for storing sensor data
 unsigned long timeData[2];
 
-byte accelZBuffer[5] = {0,0,0,0,0};
-byte baroAltBuffer[5] = {0,0,0,0,0};
-byte gyroZBuffer[7] = {0,0,0,0,0,0,0}; //The other values are arbitrary; this one is used in Simpsons Rule, so it MUST BE ODD!
+int accelZBuffer[5] = {0,0,0,0,0};
+float baroAltBuffer[5] = {0,0,0,0,0};
+int gyroZBuffer[7] = {0,0,0,0,0,0,0}; //The other values are arbitrary; this one is used in Simpsons Rule, so it MUST BE ODD!
 unsigned long timeBuffer[7] = {0,0,0,0,0,0,0}; //Must equal the size of gyroZBuffer; used for the same calculations.
 
 byte accelAverage;
@@ -249,7 +250,7 @@ void Roll_Control(sensors_event_t event) {
 
   if(!startRollFlag) { //For roll initialization, cant fins in the direction of current roll
     digitalWrite(homePin, LOW);
-    servoHomePin = false;
+    servoHomeFlag = false;
     startRollFlag = true;
     if(event.gyro.z > 0) {
       digitalWrite(statePin, HIGH);
@@ -272,19 +273,19 @@ void Roll_Control(sensors_event_t event) {
     if(abs(event.gyro.z) < MIN_ROLL_THRESHOLD)
     {
       digitalWrite(homePin, HIGH);
-      servoHomePin = true;
+      servoHomeFlag = true;
     }
     else if(event.gyro.z > 0)
       {
       digitalWrite(homePin, LOW);
-      servoHomePin = false;
+      servoHomeFlag = false;
       digitalWrite(statePin, LOW);
       finState = false;
       }
     else if(event.gyro.z < 0)
       {
       digitalWrite(homePin, LOW);
-      servoHomePin = false;
+      servoHomeFlag = false;
       digitalWrite(statePin, HIGH);
       finState = true;
       }
@@ -386,8 +387,8 @@ if(dataFlag && sendFlag) //Send data mode, only if GPS is ready
       int packetSize = 19; //Depending on the flight state, the actual packet size may change
 
       radioPacket[0] = flightState; //Start every packet with the current flight staging (lets the receiver know what data is going to come at the end of the packet)
-      radioPacket[1] = servoOnPin;
-      radioPacket[2] = servoHomePin; //The next three items in each packet report the outputs to the servo.
+      radioPacket[1] = servoOnFlag;
+      radioPacket[2] = servoHomeFlag; //The next three items in each packet report the outputs to the servo.
       radioPacket[3] = finState;
 
 union{ //Float-to-byte-string converter, needed for GPS data
@@ -425,8 +426,8 @@ union { //Since we're sending an integer, we need a different-sized memory union
 } uInt;
 
 uInt.tempInt = gyroData[2]; //Remember: THIS ASSUMES Z-AXIS IS VERTICAL!!!
-radioPacket[5] = tempArray[0];
-radioPacket[6] = tempArray[1]; 
+radioPacket[5] = uInt.tempArray[0];
+radioPacket[6] = uInt.tempArray[1]; 
 packetSize = 6;
 }
 
