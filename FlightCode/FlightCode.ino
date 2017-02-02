@@ -1,10 +1,12 @@
 /*
- * Notre Dame Rocket Team Roll Control Payload Master Code V. 0.8.3
+ * Notre Dame Rocket Team Roll Control Payload Master Code V. 0.9
  * Aidan McDonald, 2/1/17
  * 
  * Most recent changes:
- * Fixed some errors with variable names
- * Reconfigured the Adafruit sensor variable types
+ * Moved the GPS enable code again, to <600 ft post-apogee
+ * Incorporated receiving data from the ground station
+    * Added two master flags to control sensor enabling and fin control disabling
+ * Revised the data transmission section to send altitude data when gps/gyro data isn't being sent
  * 
  * To-dones:
   * Basic switch-case structure
@@ -15,14 +17,10 @@
   * Running-average calcs for critical sensor values and Simpson's Rule integration of gyro data
   * Multi-sensor verification of flight progress switch-case transitions (untested)
   * Github Sync system working
+  * Packet transmission/reception over radio (ADD THIS TO GROUND STATION CODE TOO!!)
  * 
  * To-dos:
- *  THE CODE IS ALREADY TOO BIG!!!!!
-      *  This is a pretty serious problem, considering there is still a significant amount of code that needs to be written. Part of the problem is that the
-      *  Adafruit flight controller uses four different libraries, each of which eats up memory space. Maybe replace our flight sensor package? Otherwise,
-      *  we're going to need to severely ramp down the scale of our operations...
-  * Figure out what the ground station will be transmitting and configure the receiver accordingly
-  * Figure out what data the payload transmits pre-burnout
+  * Reconfigure the servo control for the new control scheme!!!!!!!
   * Revise and enhance the staging/thresholds, particularly burnout/apogee accel values
   * Reconfigure the SD datalogging section to allow for easy spreadsheet conversion
   * TEST EVERYTHING
@@ -32,9 +30,6 @@
    *  Servo Control
    *  Flight Staging
    *  Etc., etc.
- * Receive from ground station:
-    *  GPS Sleep
-    *  Fin Override (only to home)
  * 
  */
 
@@ -58,7 +53,7 @@ Adafruit_L3GD20_Unified gyro = Adafruit_L3GD20_Unified(20);
 #define RFM95_INT 3
 #define RF95_FREQ 915.0 // Must match RX's freq; in this case must be either 915 or 868 MHz
 
-// Singleton instance of the radio driver
+// Single instance of the radio driver
 RH_RF95 rf95(RFM95_CS, RFM95_INT);
 
 #define GPSSerial Serial1
@@ -117,6 +112,8 @@ const int APOGEE_TIME_THRESHOLD = 20000;
 const int LANDED_BARO_THRESHOLD = 6;
 const int MIN_ROLL_THRESHOLD = 0;
 
+const int GPS_BARO_THRESHOLD = 200; //600 feet/200m is when the recovery system deploys
+
 bool startRollFlag = false;
 bool endRollFlag = false; //Flags for tracking roll/counter-roll progress
 bool finState = false; //Variable for tracking current fin position
@@ -128,7 +125,10 @@ float rotationCounter = 0; //Variable for tracking rotation, in revolutions
 bool sendFlag = true; //Flag for toggling send/receive mode; makes 2-way communication much easier
 bool radioWorkingFlag = true; //Flag to determine if radio initialized properly. If not, then it continues on without comms
 bool dataFlag = false; //Since SD saving and radio transmission occur in two different functions, the SD routine uses this flag to tell the radio routine if data is ready for transmission
-bool gpsOnFlag = false; //Flag to track whether GPS is currently operating/enabled
+bool gpsOnFlag = false; //Flag to determine whether GPS is currently operating/enabled
+
+bool masterEnableFlag = false; //Flag that puts the Arduino in/out of "sleep mode."
+bool finOverrideFlag = false; //Flag that acts as a "big red button" to stop the arduino's roll-control.
 
 
 void setup() {
@@ -177,23 +177,27 @@ void setup() {
 
 void loop() {
 
+  if(masterEnableFlag) //Only save/buffer data if we're actively sensing data
+  {
 /* Get a new sensor event */ 
   sensors_event_t mainEvent;
   gyro.getEvent(&mainEvent);
   accel.getEvent(&mainEvent); // Assume Z-axis is vertical for accel/gyro?
   bmp.getEvent(&mainEvent);
+    
+  Record_Data(mainEvent);//Save sensor data (accel, baro, time, GPS) to the SD card
+  BufferUpdate(mainEvent);
+  }
+  
   if(gpsOnFlag)
   char c = GPS.read(); //Must call GPS.read() at some point for data transmission to occur
 
   if(startTime != 0)
   flightTime = millis() - startTime; //Timer backup variable
-
-  Record_Data(mainEvent);//Save sensor data (accel, baro, time, GPS) to the SD card
+  
   if(radioWorkingFlag) {
   Radio_Transmit(); //Transmit/receive select data
   }
-
-  BufferUpdate(mainEvent);
  
 switch(flightState) { //Switch statement for entire rocket flight
   /* 
@@ -203,7 +207,7 @@ switch(flightState) { //Switch statement for entire rocket flight
    */
 
 case waiting:
-if(accelAverage > LIFTOFF_ACCEL_THRESHOLD)
+if(accelAverage > LIFTOFF_ACCEL_THRESHOLD && masterEnableFlag)
 {
   flightState = launched;
   startTime = millis();
@@ -224,10 +228,6 @@ Roll_Control(mainEvent);
 if(accelAverage > APOGEE_ACCEL_THRESHOLD || flightTime > APOGEE_TIME_THRESHOLD) //Add a baro test here?
 {
   flightState = falling;
-  GPS.begin(9600); //Initialize GPS; define output set and data rate
-  GPS.sendCommand(PMTK_SET_NMEA_OUTPUT_RMCGGA);
-  GPS.sendCommand(PMTK_SET_NMEA_UPDATE_1HZ);
-  gpsOnFlag = true;
 }
 break;
 
@@ -237,8 +237,16 @@ if(baroAverage < LANDED_BARO_THRESHOLD)
 {
   flightState = landed;
 }
-break;
 
+if(baroAverage < GPS_BARO_THRESHOLD) //Enable GPS if we're low enough
+{
+  GPS.begin(9600); //Initialize GPS; define output set and data rate
+  GPS.sendCommand(PMTK_SET_NMEA_OUTPUT_RMCGGA);
+  GPS.sendCommand(PMTK_SET_NMEA_UPDATE_1HZ);
+  gpsOnFlag = true;
+}
+
+break;
 
 case landed:
 
@@ -383,42 +391,52 @@ if(dataFlag && sendFlag) //Send data mode, only if GPS is ready
       dataFlag = false; //Only turn off this flag if Arduino is actively sending data
       sendFlag = false; //Once we send data, wait for data to be received
       
-      uint8_t radioPacket[19]; //Buffer of bytes for radio transmission
-      int packetSize = 19; //Depending on the flight state, the actual packet size may change
+      uint8_t radioPacket[21]; //Buffer of bytes for radio transmission
+      int packetSize = 21; //Depending on the flight state, the actual packet size may change
 
       radioPacket[0] = flightState; //Start every packet with the current flight staging (lets the receiver know what data is going to come at the end of the packet)
-      radioPacket[1] = servoOnFlag;
-      radioPacket[2] = servoHomeFlag; //The next three items in each packet report the outputs to the servo.
-      radioPacket[3] = finState;
+      radioPacket[1] = masterEnableFlag;
+      radioPacket[2] = finOverrideFlag; //Report back on the perceived state of affairs with the critical flags, in order for adjustments to be made if necessary.
+      radioPacket[3] = 42; //Answer to life, the universe, and everything. Used to confirm packet validity.
+      
+      radioPacket[4] = gpsOnFlag;
+      radioPacket[4] = servoOnFlag;
+      radioPacket[5] = servoHomeFlag; //The next items in each packet report the outputs to the servo and whether we are running GPS.
+      radioPacket[6] = finState;
 
 union{ //Float-to-byte-string converter, needed for GPS data
   float tempFloat;
   byte tempArray[3];
 } u;
 
-if(flightState > burnout)
+if(!masterEnableFlag) {
+  packetSize = 6; //If sensors aren't enabled yet, only send the above data
+}
+
+else if(gpsOnFlag)
 {
 u.tempFloat = gpsLatitude;
 for(int c=0; c<4; c++){
-  radioPacket[c+4] = u.tempArray[c];
+  radioPacket[c+7] = u.tempArray[c];
 }
 radioPacket[4] = gpsLatDirect; //N or S
 u.tempFloat = gpsLongitude;
 for(int c=0; c<4; c++){
-  radioPacket[(c+9)] = u.tempArray[c];
+  radioPacket[(c+11)] = u.tempArray[c];
 }
 radioPacket[9] = gpsLonDirect; //E or W
 u.tempFloat = gpsAltitude;
 for(int c=0; c<4; c++){
-  radioPacket[(c+14)] = u.tempArray[c];
+  radioPacket[(c+16)] = u.tempArray[c];
 }
-radioPacket[18] = gpsFix;
-radioPacket[19] = gpsFixQuality; //Useful for determining valid/invalid GPS data; if fix or quality are 0 the data isn't reliable
+radioPacket[20] = gpsFix;
+radioPacket[21] = gpsFixQuality; //Useful for determining valid/invalid GPS data; if fix or quality are 0 the data isn't reliable
 }
 
 else if(flightState = burnout) {
 
-  radioPacket[4] = endRollFlag; //If we're in burnout, send the "end roll flag." It determines whether we send the running tally (float) or the current rotation speed (int)
+  radioPacket[7] = endRollFlag; //If we're in burnout, send the "end roll flag." It determines whether we send the running tally (float) or the current rotation speed (int)
+
 if(endRollFlag) {
 union { //Since we're sending an integer, we need a different-sized memory union to work with
   int tempInt;
@@ -426,32 +444,33 @@ union { //Since we're sending an integer, we need a different-sized memory union
 } uInt;
 
 uInt.tempInt = gyroData[2]; //Remember: THIS ASSUMES Z-AXIS IS VERTICAL!!!
-radioPacket[5] = uInt.tempArray[0];
-radioPacket[6] = uInt.tempArray[1]; 
-packetSize = 6;
+radioPacket[8] = uInt.tempArray[0];
+radioPacket[9] = uInt.tempArray[1]; 
+packetSize = 9;
 }
 
 else {
   u.tempFloat = rotationCounter;
 for(int c=0; c<4; c++){
-  radioPacket[(c+5)] = u.tempArray[c];
+  radioPacket[(c+8)] = u.tempArray[c];
 }
-packetSize = 8;
-}
-
+packetSize = 11;
 }
 
-else { //If we're not in the burnout phase yet, then send... what?
-
-
-  
 }
 
+else { //If we're not in the burnout phase and haven't turned on the GPS, then send current altitude
+u.tempFloat = baroData[2];
+for(int c=0; c<4; c++){
+  radioPacket[(c+7)] = u.tempArray[c];
+}
+packetSize = 10;
+}
 
 
 rf95.send((uint8_t *)radioPacket, packetSize); //Once packet has been constructed, transmit
 rf95.waitPacketSent(); //Short, necessary wait for packet transmission to complete
-  }
+}
 
  else { //Receive data mode
 
@@ -462,10 +481,19 @@ rf95.waitPacketSent(); //Short, necessary wait for packet transmission to comple
     uint8_t len = sizeof(buf); //Variables to contain received message
     if (rf95.recv(buf, &len)) //If message is intact; this call also fills buf and len with data
    {
-    /*
-     * This is where code should go to do things or set flags based on input from the ground station.
-     * Update when you've figured out what goes here!!!!!
-     */
+
+    //Two very important flags from the ground station, sent in triplicate.
+    //masterEnableFlag enables the flight sensors to begin liftoff detection; finOverrideFlag acts as a master interrupt to halt in-flight fin rotation.
+    
+    if(buf[0] || buf[1] || buf[2])
+        masterEnableFlag = true;
+      else
+        masterEnableFlag = false;
+
+     if(buf[3] || buf[4] || buf[5])
+        finOverrideFlag = true;
+     else
+        finOverrideFlag = false;
    }
   }  
   }
