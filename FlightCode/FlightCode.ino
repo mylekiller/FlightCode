@@ -1,12 +1,14 @@
 /*
- * Notre Dame Rocket Team Roll Control Payload Master Code V. 0.9
+ * Notre Dame Rocket Team Roll Control Payload Master Code V. 0.91
  * Aidan McDonald, 2/1/17
+ * Kyle Miller, 2/2/17
  * 
  * Most recent changes:
  * Moved the GPS enable code again, to <600 ft post-apogee
  * Incorporated receiving data from the ground station
     * Added two master flags to control sensor enabling and fin control disabling
  * Revised the data transmission section to send altitude data when gps/gyro data isn't being sent
+ * Changed Pin Variables to match what the inputs to the servo will be 
  * 
  * To-dones:
   * Basic switch-case structure
@@ -91,9 +93,10 @@ long startTime = 0; //variable to note flight time
 long flightTime = 0;
 
 //Constants for servo pin output
-const int controlPin = 0; //"control" is the master switch- must be 1 to enable servo
-const int homePin = 1; //Set HIGH to override "statePin" and go to Home. Otherwise, "statePin" takes precedence
-const int statePin = 2; //HIGH and LOW are two preset positions
+const int controlPin = 0; //"control" is the master switch- must be 1 to enable servo, pulse this pin to trigger a move 
+const int inputA = 1; //The inputA and inputB pins control which way the fins will increment when the move is triggered
+const int inputB = 2; //inputA = 0, inputB = 0 is +4 Degrees, inputA = 1, inputB = 0 is -4 Degrees, inputA = 0, inputB = 1 is +8 Degrees,
+					  // inputA = 1, inputB = 1 is -8 Degrees 
 
 //Constants for flight staging
 const int waiting = 0;
@@ -136,8 +139,8 @@ void setup() {
   digitalWrite(RFM95_RST, HIGH);
   
   pinMode(controlPin, OUTPUT);
-  pinMode(homePin, OUTPUT);
-  pinMode(statePin, OUTPUT);
+  pinMode(inputA, OUTPUT);
+  pinMode(inputB, OUTPUT);
 
   accel.begin();
   bmp.begin();
@@ -147,7 +150,7 @@ void setup() {
   
   digitalWrite(controlPin, HIGH); //Enable servo
   servoOnFlag = true;
-  digitalWrite(homePin, HIGH); //Set servo to "home" position
+  digitalWrite(inputA, HIGH); //Set servo to "home" position
   servoHomeFlag = true;
 
   //Manual radio reset
@@ -257,44 +260,44 @@ break;
 void Roll_Control(sensors_event_t event) {
 
   if(!startRollFlag) { //For roll initialization, cant fins in the direction of current roll
-    digitalWrite(homePin, LOW);
+    digitalWrite(inputA, LOW);
     servoHomeFlag = false;
     startRollFlag = true;
     if(event.gyro.z > 0) {
-      digitalWrite(statePin, HIGH);
+      digitalWrite(inputB, HIGH);
       finState = true;
     }
     else {
-      digitalWrite(statePin, LOW); 
+      digitalWrite(inputB, LOW); 
       finState = false;
     }
   }
-  else if(!endRollFlag) { //Wait until two revolutions have ben completed to begin counter-roll
+  else if(!endRollFlag) { //Wait until two revolutions have been completed to begin counter-roll
     
     if(rotationCounter > 2) {
       finState = !finState;
-      digitalWrite(statePin, finState);
+      digitalWrite(inputB, finState);
       endRollFlag = true;
     }
   }
   else { //At this point, continue to make adjustments to prevent roll
     if(abs(event.gyro.z) < MIN_ROLL_THRESHOLD)
     {
-      digitalWrite(homePin, HIGH);
+      digitalWrite(inputA, HIGH);
       servoHomeFlag = true;
     }
     else if(event.gyro.z > 0)
       {
-      digitalWrite(homePin, LOW);
+      digitalWrite(inputA, LOW);
       servoHomeFlag = false;
-      digitalWrite(statePin, LOW);
+      digitalWrite(inputB, LOW);
       finState = false;
       }
     else if(event.gyro.z < 0)
       {
-      digitalWrite(homePin, LOW);
+      digitalWrite(inputA, LOW);
       servoHomeFlag = false;
-      digitalWrite(statePin, HIGH);
+      digitalWrite(inputB, HIGH);
       finState = true;
       }
   }
