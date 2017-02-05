@@ -1,10 +1,10 @@
 /*
-   Notre Dame Rocket Team Roll Control Payload Master Code V. 1.0.1
+   Notre Dame Rocket Team Roll Control Payload Master Code V. 1.0.2
    Aidan McDonald, 2/5/17
    Kyle Miller, 2/2/17
 
    Most recent changes:
-   Added a flag/pin which controls power to the servo via a transistor
+   Added backup code for the transmitter which sends a second packet if it has been some time without a packet received.
 
    To-dones:
     Basic switch-case structure
@@ -130,6 +130,9 @@ bool gpsOnFlag = false; //Flag to determine whether GPS is currently operating/e
 
 bool masterEnableFlag = false; //Flag that puts the Arduino in/out of "sleep mode."
 bool finOverrideFlag = false; //Flag that acts as a "big red button" to stop the arduino's roll-control.
+
+const int timeDelay = 333; //In milliseconds
+unsigned long rxTime = 0; //Variables for the radio transmitter double-pulse backup code
 
 
 void setup() {
@@ -482,6 +485,8 @@ void Radio_Transmit(void) {
 
     rf95.send((uint8_t *)radioPacket, packetSize); //Once packet has been constructed, transmit
     rf95.waitPacketSent(); //Short, necessary wait for packet transmission to complete
+
+    rxTime = millis(); //Note the most recent packet-sent time
   }
 
   else { //Receive data mode
@@ -507,13 +512,17 @@ void Radio_Transmit(void) {
         else
           finOverrideFlag = false;
 
-        if(buf[6] || buf[7] || buf[8]) {
+        if (buf[6] || buf[7] || buf[8]) {
           servoPowerFlag = true;
           digitalWrite(servoPowerPin, servoPowerFlag);
         }
-        
+
       }
     }
+
+    else if ((millis() - rxTime) > timeDelay)
+      sendFlag = true;
+
   }
 }
 
