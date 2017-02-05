@@ -1,43 +1,7 @@
 /*
-<<<<<<< Updated upstream
- * Notre Dame Rocket Team Roll Control Payload Master Code V. 0.91
- * Aidan McDonald, 2/1/17
- * Kyle Miller, 2/2/17
- * 
- * Most recent changes:
- * Moved the GPS enable code again, to <600 ft post-apogee
- * Incorporated receiving data from the ground station
-    * Added two master flags to control sensor enabling and fin control disabling
- * Revised the data transmission section to send altitude data when gps/gyro data isn't being sent
- * Changed Pin Variables to match what the inputs to the servo will be 
- * 
- * To-dones:
-  * Basic switch-case structure
-  * Incorporation of Adafruit sensor code
-  * Added GPS functionality
-  * Integration of radio-transmission/reception code
-  * Datalogging capacity (untested)
-  * Running-average calcs for critical sensor values and Simpson's Rule integration of gyro data
-  * Multi-sensor verification of flight progress switch-case transitions (untested)
-  * Github Sync system working
-  * Packet transmission/reception over radio (ADD THIS TO GROUND STATION CODE TOO!!)
- * 
- * To-dos:
-  * Reconfigure the servo control for the new control scheme!!!!!!!
-  * Revise and enhance the staging/thresholds, particularly burnout/apogee accel values
-  * Reconfigure the SD datalogging section to allow for easy spreadsheet conversion
-  * TEST EVERYTHING
-  * NO REALLY, EVERYTHING
-   *  Ada Sensors
-   *  SD Saving
-   *  Servo Control
-   *  Flight Staging
-   *  Etc., etc.
- * 
- */
-=======
    Notre Dame Rocket Team Roll Control Payload Master Code V. 1.0.0
    Aidan McDonald, 2/4/17
+   Kyle Miller, 2/2/17
 
    Most recent changes:
    Reconfigured the roll control subroutine for the new, increment-based servo mode
@@ -70,7 +34,6 @@
       Etc., etc.
 
 */
->>>>>>> Stashed changes
 
 #include <Wire.h>
 #include <SPI.h>
@@ -130,12 +93,6 @@ long startTime = 0; //variable to note flight time
 long flightTime = 0;
 
 //Constants for servo pin output
-<<<<<<< Updated upstream
-const int controlPin = 0; //"control" is the master switch- must be 1 to enable servo, pulse this pin to trigger a move 
-const int inputA = 1; //The inputA and inputB pins control which way the fins will increment when the move is triggered
-const int inputB = 2; //inputA = 0, inputB = 0 is +4 Degrees, inputA = 1, inputB = 0 is -4 Degrees, inputA = 0, inputB = 1 is +8 Degrees,
-					  // inputA = 1, inputB = 1 is -8 Degrees 
-=======
 const int controlPin = 0; //"control" is the pin which is pulsed to trigger the servo to move
 const int statePinA = 1; //The state of pins A and B determines which of four motions the servo takes when the control pin is pulsed.
 const int statePinB = 2; // If B is low, move 1 position, if B is high, move two positions. High A is negative (counterclockwise?), low A is positive (clockwise?)
@@ -143,7 +100,6 @@ const int LEFT = 0;
 const int CENTER = 1;
 const int RIGHT = 2;
 int finPosition = CENTER; //Since the servo moves based on increments and not absolute positions, these constants and variable are needed to track the fins' position.
->>>>>>> Stashed changes
 
 //Constants for flight staging
 const int waiting = 0;
@@ -183,29 +139,16 @@ void setup() {
   digitalWrite(RFM95_RST, HIGH);
 
   pinMode(controlPin, OUTPUT);
-<<<<<<< Updated upstream
-  pinMode(inputA, OUTPUT);
-  pinMode(inputB, OUTPUT);
-=======
   pinMode(statePinA, OUTPUT);
   pinMode(statePinB, OUTPUT);
->>>>>>> Stashed changes
 
   accel.begin();
   bmp.begin();
   gyro.enableAutoRange(true);
   gyro.begin();
   SD.begin(cardSelectPin);//Initialize the sensors and SD card
-<<<<<<< Updated upstream
-  
-  digitalWrite(controlPin, HIGH); //Enable servo
-  servoOnFlag = true;
-  digitalWrite(inputA, HIGH); //Set servo to "home" position
-  servoHomeFlag = true;
-=======
 
   digitalWrite(controlPin, LOW); //Set the servo control pin to low to make sure it doesn't pulse accidentally
->>>>>>> Stashed changes
 
   //Manual radio reset
   digitalWrite(RFM95_RST, LOW);
@@ -315,26 +258,6 @@ void loop() {
 
 void Roll_Control(sensors_event_t event) {
 
-<<<<<<< Updated upstream
-  if(!startRollFlag) { //For roll initialization, cant fins in the direction of current roll
-    digitalWrite(inputA, LOW);
-    servoHomeFlag = false;
-    startRollFlag = true;
-    if(event.gyro.z > 0) {
-      digitalWrite(inputB, HIGH);
-      finState = true;
-    }
-    else {
-      digitalWrite(inputB, LOW); 
-      finState = false;
-    }
-  }
-  else if(!endRollFlag) { //Wait until two revolutions have been completed to begin counter-roll
-    
-    if(rotationCounter > 2) {
-      finState = !finState;
-      digitalWrite(inputB, finState);
-=======
   if (!startRollFlag) { //For roll initialization, cant fins in the direction of current roll
     startRollFlag = true;
     if (event.gyro.z > 0) {
@@ -348,32 +271,12 @@ void Roll_Control(sensors_event_t event) {
 
     if (rotationCounter > 2) {
       Set_Servo(finPosition, abs(finPosition - 2)); //This will output LEFT if finPosition = RIGHT, and vice-versa
->>>>>>> Stashed changes
       endRollFlag = true;
     }
   }
   else { //At this point, continue to make adjustments to prevent roll
     if (abs(event.gyro.z) < MIN_ROLL_THRESHOLD)
     {
-<<<<<<< Updated upstream
-      digitalWrite(inputA, HIGH);
-      servoHomeFlag = true;
-    }
-    else if(event.gyro.z > 0)
-      {
-      digitalWrite(inputA, LOW);
-      servoHomeFlag = false;
-      digitalWrite(inputB, LOW);
-      finState = false;
-      }
-    else if(event.gyro.z < 0)
-      {
-      digitalWrite(inputA, LOW);
-      servoHomeFlag = false;
-      digitalWrite(inputB, HIGH);
-      finState = true;
-      }
-=======
       Set_Servo(finPosition, CENTER);
     }
     else if (event.gyro.z > 0) //Again, this assumes positive gyro values are clockwise.
@@ -384,7 +287,6 @@ void Roll_Control(sensors_event_t event) {
     {
       Set_Servo(finPosition, LEFT);
     }
->>>>>>> Stashed changes
   }
 
 }
