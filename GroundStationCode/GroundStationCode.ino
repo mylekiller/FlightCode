@@ -1,16 +1,14 @@
 /*
-   Notre Dame Rocket Team Roll Control Payload Ground Station Code V. 0.6.0
-   Aidan McDonald, 2/7/17
+   Notre Dame Rocket Team Roll Control Payload Ground Station Code V. 0.6.1
+   Aidan McDonald, 2/8/17
    Kyle Miller, 2/2/17
 
    Most recent changes:
-   Overhauled the packet-processing code to match the flight code (v. 1.0.3)
-   Added LCD compatibility
-   Updated the to-do list with some additional possibilities
+   Changed the packet-processing code to match the flight code (v. 1.0.4)
 
    To-dones:
    Basic radio transmit-receive architecture in place
-   Reconfigured packet processing code to properly match the current flight code (v. 1.0.3)
+   Reconfigured packet processing code to properly match the current flight code (v. 1.0.4)
    Added error messages for every current failure mode
    All data now goes to an LCD! (Wiring correctness TBD)
 
@@ -143,22 +141,23 @@ void loop()
         flag, respectively. (Those three flags are the data the ground station is
         transmitting). Then, element 4 is "42," just to serve as a packet validity
         confirmation number. Element 5 is a flag which states whether the GPS is on;
-        and finally element 6 states the current fin position.
+        element 6 states the current fin position and element 7 states whether the SD
+        is working.
 
        Now for the special cases:
         If masterEnableFlag (#1) is false, that is the end of the transmission.
         If gpsOnFlag (#5) is true, the rest of the packet is gps data.
           Latitude (4) then direction (1); longitude (4) then direction (1);
-          Altitude (4) then Fix (1) then Fix Quality (1) for a total length of 22
-        If flight state (#0) is burnout (2), then element 7 is the "end roll flag,"
+          Altitude (4) then Fix (1) then Fix Quality (1) for a total length of 23
+        If flight state (#0) is burnout (2), then element 8 is the "end roll flag,"
         which indicates whether the two-full-revolution process is complete or not.
           If the flag is false, the next/last piece of data is the number of
-          completed revolutions (4), leading to a total length of 11.
+          completed revolutions (4), leading to a total length of 12.
           If the flag is true, the next/last piece of data is rotational velocity
-          on the z-axis (2), leading to a total length of 9.
+          on the z-axis (2), leading to a total length of 10.
 
         Finally, if no other conditions apply, the rest of the packet is altitude data
-        (4), leading to a total length of 10.
+        (4), leading to a total length of 11.
     */
 
     if (rf95.available())
@@ -201,21 +200,21 @@ void loop()
           int gpsQuality;
 
           for (int c = 0; c < 4; c++) {
-            u.tempBuff[c] = buf[c + 7];
+            u.tempBuff[c] = buf[c + 8];
           }
           latitude = u.tempFloat;
-          latDirect = buf[11];
+          latDirect = buf[12];
           for (int c = 0; c < 4; c++) {
-            u.tempBuff[c] = buf[c + 12];
+            u.tempBuff[c] = buf[c + 13];
           }
           longitude = u.tempFloat;
-          longDirect = buf[16];
+          longDirect = buf[17];
           for (int c = 0; c < 4; c++) {
-            u.tempBuff[c] = buf[c + 17];
+            u.tempBuff[c] = buf[c + 18];
           }
           altitude = u.tempFloat;
-          gpsFix = buf[21];
-          gpsQuality = buf[22];
+          gpsFix = buf[22];
+          gpsQuality = buf[23];
 
           if (gpsFix == 0 || gpsQuality == 0) {
             lcd.print("No GPS Fix...");
@@ -233,10 +232,10 @@ void loop()
 
         else if (flightState == burnout) { //This indicates we are in the roll-controll phase
 
-          if (buf[7] == 0) { //This flag being false indicates the payload is still trying to complete its two revolutions, so completed revolutions are tracked
+          if (buf[8] == 0) { //This flag being false indicates the payload is still trying to complete its two revolutions, so completed revolutions are tracked
             float completedRevs;
             for (int c = 0; c < 4; c++) {
-              u.tempBuff[c] = buf[c + 8];
+              u.tempBuff[c] = buf[c + 9];
             }
             completedRevs = u.tempFloat;
             lcd.print("Revs Complete:");
@@ -249,8 +248,8 @@ void loop()
               int tempInt;
               byte tempArray[1];
             } uInt;
-            uInt.tempArray[0] = buf[8];
-            uInt.tempArray[1] = buf[9];
+            uInt.tempArray[0] = buf[9];
+            uInt.tempArray[1] = buf[10];
             rotationVel = uInt.tempInt;
             lcd.print("Rotation Speed:");
             lcd.setCursor(0, 1);
@@ -263,7 +262,7 @@ void loop()
         else { //If none of the other conditions are met, altitude data is transmitted
           float altitude;
           for (int c = 0; c < 4; c++) {
-            u.tempBuff[c] = buf[c + 7];
+            u.tempBuff[c] = buf[c + 8];
           }
           altitude = u.tempFloat;
           lcd.print("Altitude: ");

@@ -1,11 +1,12 @@
 /*
-   Notre Dame Rocket Team Roll Control Payload Master Code V. 1.0.3
-   Aidan McDonald, 2/7/17
+   Notre Dame Rocket Team Roll Control Payload Master Code V. 1.0.4
+   Aidan McDonald, 2/8/17
    Kyle Miller, 2/2/17
 
    Most recent changes:
-   Minor modification of setup code such that, if the radio fails to initialize, the Arduino automatically enables data recording
-   (However, it does not autonomously give power to the servo!)
+   Figured out what makes the SD card work and changed the initialization code accordingly
+   Added a flag which notes whether the SD was initialized properly
+   Reconfigured the packet code to include the above flag
 
    To-dones:
     Basic switch-case structure
@@ -20,11 +21,12 @@
     Roll control subroutine reconfigured for new servo mode
 
    To-dos:
+    Revise how the packet code handles buffer addresses? I'm getting tired of having to change a bunch of numbers
+    every time we change the packet contents...
     Confirm whether positive=clockwise for the servo
     Revise and enhance the staging/thresholds, particularly burnout/apogee accel values
     Reconfigure the SD datalogging section to allow for easy spreadsheet conversion
-    TEST EVERYTHING
-      SD Saving
+    Test List:
       Servo Control
       Flight Staging
       Etc., etc.
@@ -58,7 +60,8 @@ RH_RF95 rf95(RFM95_CS, RFM95_INT);
 Adafruit_GPS GPS(&GPSSerial); //Construct instance of the GPS object
 
 //Constants for SD Card communication
-const int cardSelectPin = 53; //Standard for ATMega; other SPI comms pins are 50-52
+const int cardSelectPin = 10; //Note: for some incredibly stupid reason, you must initialize on pin 8 first for proper functionality
+const int stupidSDPin = 8;
 File dataLog; //File to log flight data
 int accelData[3];
 int gyroData[3];
@@ -128,6 +131,7 @@ bool sendFlag = true; //Flag for toggling send/receive mode; makes 2-way communi
 bool radioWorkingFlag = true; //Flag to determine if radio initialized properly. If not, then it continues on without comms
 bool dataFlag = false; //Since SD saving and radio transmission occur in two different functions, the SD routine uses this flag to tell the radio routine if data is ready for transmission
 bool gpsOnFlag = false; //Flag to determine whether GPS is currently operating/enabled
+bool sdWorkingFlag = true; //Flag to note if SD initializes properly, since that has been a problem in the past.
 
 bool masterEnableFlag = false; //Flag that puts the Arduino in/out of "sleep mode."
 bool finOverrideFlag = false; //Flag that acts as a "big red button" to stop the arduino's roll-control.
@@ -148,8 +152,11 @@ void setup() {
   accel.begin();
   bmp.begin();
   gyro.enableAutoRange(true);
-  gyro.begin();
-  SD.begin(cardSelectPin);//Initialize the sensors and SD card
+  gyro.begin();//Initialize the sensors
+
+  SD.begin(stupidSDPin);
+  if (!SD.begin(cardSelectPin);) //Initialize the SD card; set a flag if the initialization fails
+    sdWorkingFlag = false;
 
   digitalWrite(controlPin, LOW); //Set the servo control pin to low to make sure it doesn't pulse accidentally
   digitalWrite(servoPowerPin, servoPowerFlag); //Make sure the servo is powered off
@@ -358,45 +365,47 @@ void Record_Data(sensors_event_t event) { //Subroutine for saving sensor data to
     gpsFixQuality = GPS.fixquality;
   }
 
+  if (sdWorkingFlag) { //Only actually work with the SD card if the SD card is working
+    dataLog = SD.open("flight_data.txt", FILE_WRITE); //Open the file flight_data.txt in write mode
 
-  dataLog = SD.open("flight_data.txt", FILE_WRITE); //Open the file flight_data.txt in write mode
+    if (dataLog) { //log data only if the file opened properly
+      dataLog.println(); //Start a new line
 
-  if (dataLog) { //log data only if the file opened properly
-    dataLog.println(); //Start a new line
+      for (int c = 0; c < 1; c++) {
+        dataLog.print(timeData[c]);
+        dataLog.print(", "); //Separate data entries by a comma and a space
+      }
 
-    for (int c = 0; c < 1; c++) {
-      dataLog.print(timeData[c]);
-      dataLog.print(", "); //Separate data entries by a comma and a space
-    }
+      for (int c = 0; c < 2; c++) {
+        dataLog.print(accelData[c]);
+        dataLog.print(", ");
+      }
 
-    for (int c = 0; c < 2; c++) {
-      dataLog.print(accelData[c]);
+      for (int c = 0; c < 2; c++) {
+        dataLog.print(gyroData[c]);
+        dataLog.print(", ");
+      }
+
+      for (int c = 0; c < 2; c++) {
+        dataLog.print(baroData[c]);
+        dataLog.print(", ");
+      }
+
+      dataLog.print(gpsLatitude);
+      dataLog.print(gpsLatDirect);
       dataLog.print(", ");
-    }
-
-    for (int c = 0; c < 2; c++) {
-      dataLog.print(gyroData[c]);
+      dataLog.print(gpsLongitude);
+      dataLog.print(gpsLonDirect);
       dataLog.print(", ");
-    }
-
-    for (int c = 0; c < 2; c++) {
-      dataLog.print(baroData[c]);
+      dataLog.print(gpsAltitude);
       dataLog.print(", ");
+      dataLog.print(gpsFix);
+      dataLog.print(", ");
+      dataLog.print(gpsFixQuality);
+
+      dataLog.close(); //Close the file
     }
 
-    dataLog.print(gpsLatitude);
-    dataLog.print(gpsLatDirect);
-    dataLog.print(", ");
-    dataLog.print(gpsLongitude);
-    dataLog.print(gpsLonDirect);
-    dataLog.print(", ");
-    dataLog.print(gpsAltitude);
-    dataLog.print(", ");
-    dataLog.print(gpsFix);
-    dataLog.print(", ");
-    dataLog.print(gpsFixQuality);
-
-    dataLog.close(); //Close the file
   }
 
 }
@@ -410,8 +419,8 @@ void Radio_Transmit(void) {
     dataFlag = false; //Only turn off this flag if Arduino is actively sending data
     sendFlag = false; //Once we send data, wait for data to be received
 
-    uint8_t radioPacket[22]; //Buffer of bytes for radio transmission
-    int packetSize = 22; //Depending on the flight state, the actual packet size may change
+    uint8_t radioPacket[23]; //Buffer of bytes for radio transmission
+    int packetSize = 23; //Depending on the flight state, the actual packet size may change
 
     radioPacket[0] = flightState; //Start every packet with the current flight staging (lets the receiver know what data is going to come at the end of the packet)
     radioPacket[1] = masterEnableFlag;
@@ -421,6 +430,7 @@ void Radio_Transmit(void) {
 
     radioPacket[5] = gpsOnFlag;
     radioPacket[6] = finPosition; //The next items in each packet report the outputs to the servo and whether we are running GPS.
+    radioPacket[7] = sdWorkingFlag;
 
     union { //Float-to-byte-string converter, needed for floating-point sensor data
       float tempFloat;
@@ -428,32 +438,32 @@ void Radio_Transmit(void) {
     } u;
 
     if (!masterEnableFlag) {
-      packetSize = 6; //If sensors aren't enabled yet, only send the above data
+      packetSize = 7; //If sensors aren't enabled yet, only send the above data
     }
 
     else if (gpsOnFlag)
     {
       u.tempFloat = gpsLatitude;
       for (int c = 0; c < 4; c++) {
-        radioPacket[c + 7] = u.tempArray[c];
+        radioPacket[c + 8] = u.tempArray[c];
       }
-      radioPacket[11] = gpsLatDirect; //N or S
+      radioPacket[12] = gpsLatDirect; //N or S
       u.tempFloat = gpsLongitude;
       for (int c = 0; c < 4; c++) {
-        radioPacket[(c + 12)] = u.tempArray[c];
+        radioPacket[(c + 13)] = u.tempArray[c];
       }
-      radioPacket[16] = gpsLonDirect; //E or W
+      radioPacket[17] = gpsLonDirect; //E or W
       u.tempFloat = gpsAltitude;
       for (int c = 0; c < 4; c++) {
-        radioPacket[(c + 17)] = u.tempArray[c];
+        radioPacket[(c + 18)] = u.tempArray[c];
       }
-      radioPacket[21] = gpsFix;
-      radioPacket[22] = gpsFixQuality; //Useful for determining valid/invalid GPS data; if fix or quality are 0 the data isn't reliable
+      radioPacket[22] = gpsFix;
+      radioPacket[23] = gpsFixQuality; //Useful for determining valid/invalid GPS data; if fix or quality are 0 the data isn't reliable
     }
 
     else if (flightState = burnout) {
 
-      radioPacket[7] = endRollFlag; //If we're in burnout, send the "end roll flag." It determines whether we send the running tally (float) or the current rotation speed (int)
+      radioPacket[8] = endRollFlag; //If we're in burnout, send the "end roll flag." It determines whether we send the running tally (float) or the current rotation speed (int)
 
       if (endRollFlag) {
         union { //Since we're sending an integer, we need a different-sized memory union to work with
@@ -462,17 +472,17 @@ void Radio_Transmit(void) {
         } uInt;
 
         uInt.tempInt = gyroData[2];
-        radioPacket[8] = uInt.tempArray[0];
-        radioPacket[9] = uInt.tempArray[1];
-        packetSize = 9;
+        radioPacket[9] = uInt.tempArray[0];
+        radioPacket[10] = uInt.tempArray[1];
+        packetSize = 10;
       }
 
       else {
         u.tempFloat = rotationCounter;
         for (int c = 0; c < 4; c++) {
-          radioPacket[(c + 8)] = u.tempArray[c];
+          radioPacket[(c + 9)] = u.tempArray[c];
         }
-        packetSize = 11;
+        packetSize = 12;
       }
 
     }
@@ -480,9 +490,9 @@ void Radio_Transmit(void) {
     else { //If we're not in the burnout phase and haven't turned on the GPS, then send current altitude
       u.tempFloat = baroData[2];
       for (int c = 0; c < 4; c++) {
-        radioPacket[(c + 7)] = u.tempArray[c];
+        radioPacket[(c + 8)] = u.tempArray[c];
       }
-      packetSize = 10;
+      packetSize = 11;
     }
 
 
