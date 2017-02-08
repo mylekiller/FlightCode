@@ -1,10 +1,11 @@
 /*
-   Notre Dame Rocket Team Roll Control Payload Master Code V. 1.0.2
-   Aidan McDonald, 2/5/17
+   Notre Dame Rocket Team Roll Control Payload Master Code V. 1.0.3
+   Aidan McDonald, 2/7/17
    Kyle Miller, 2/2/17
 
    Most recent changes:
-   Added backup code for the transmitter which sends a second packet if it has been some time without a packet received.
+   Minor modification of setup code such that, if the radio fails to initialize, the Arduino automatically enables data recording
+   (However, it does not autonomously give power to the servo!)
 
    To-dones:
     Basic switch-case structure
@@ -161,9 +162,11 @@ void setup() {
 
   if (!rf95.init()) { //Confirm radio was initialized properly and set frequency; note if a failure occurs
     radioWorkingFlag = false;
+    masterEnableFlag = true; //If the radio fails to work, self-initialize data processing
   }
   if (!rf95.setFrequency(RF95_FREQ)) {
     radioWorkingFlag = false;
+    masterEnableFlag = true; //If the radio fails to work, self-initialize data processing
   }
   rf95.setTxPower(23, false); //Set transmitter power to maximum (23 dBm); not sure what the bool value is for but all the examples used it
 
@@ -407,8 +410,8 @@ void Radio_Transmit(void) {
     dataFlag = false; //Only turn off this flag if Arduino is actively sending data
     sendFlag = false; //Once we send data, wait for data to be received
 
-    uint8_t radioPacket[21]; //Buffer of bytes for radio transmission
-    int packetSize = 21; //Depending on the flight state, the actual packet size may change
+    uint8_t radioPacket[22]; //Buffer of bytes for radio transmission
+    int packetSize = 22; //Depending on the flight state, the actual packet size may change
 
     radioPacket[0] = flightState; //Start every packet with the current flight staging (lets the receiver know what data is going to come at the end of the packet)
     radioPacket[1] = masterEnableFlag;
@@ -434,18 +437,18 @@ void Radio_Transmit(void) {
       for (int c = 0; c < 4; c++) {
         radioPacket[c + 7] = u.tempArray[c];
       }
-      radioPacket[4] = gpsLatDirect; //N or S
+      radioPacket[11] = gpsLatDirect; //N or S
       u.tempFloat = gpsLongitude;
       for (int c = 0; c < 4; c++) {
-        radioPacket[(c + 11)] = u.tempArray[c];
+        radioPacket[(c + 12)] = u.tempArray[c];
       }
-      radioPacket[9] = gpsLonDirect; //E or W
+      radioPacket[16] = gpsLonDirect; //E or W
       u.tempFloat = gpsAltitude;
       for (int c = 0; c < 4; c++) {
-        radioPacket[(c + 16)] = u.tempArray[c];
+        radioPacket[(c + 17)] = u.tempArray[c];
       }
-      radioPacket[20] = gpsFix;
-      radioPacket[21] = gpsFixQuality; //Useful for determining valid/invalid GPS data; if fix or quality are 0 the data isn't reliable
+      radioPacket[21] = gpsFix;
+      radioPacket[22] = gpsFixQuality; //Useful for determining valid/invalid GPS data; if fix or quality are 0 the data isn't reliable
     }
 
     else if (flightState = burnout) {
@@ -458,7 +461,7 @@ void Radio_Transmit(void) {
           byte tempArray[1];
         } uInt;
 
-        uInt.tempInt = gyroData[2]; //Remember: THIS ASSUMES Z-AXIS IS VERTICAL!!!
+        uInt.tempInt = gyroData[2];
         radioPacket[8] = uInt.tempArray[0];
         radioPacket[9] = uInt.tempArray[1];
         packetSize = 9;
@@ -499,8 +502,10 @@ void Radio_Transmit(void) {
       if (rf95.recv(buf, &len)) //If message is intact; this call also fills buf and len with data
       {
 
-        //Two very important flags from the ground station, sent in triplicate.
-        //masterEnableFlag enables the flight sensors to begin liftoff detection; finOverrideFlag acts as a master interrupt to halt in-flight fin rotation.
+        //Three very important flags from the ground station, sent in triplicate.
+        //masterEnableFlag enables the flight sensors to begin liftoff detection.
+        //finOverrideFlag acts as a master interrupt to halt in-flight fin rotation.
+        //servoPowerFlag controls the transistor powering the servo (so that it isn't enabled until the fin guide is in place)
 
         if (buf[0] || buf[1] || buf[2])
           masterEnableFlag = true;
