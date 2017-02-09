@@ -1,14 +1,14 @@
 /*
-   Notre Dame Rocket Team Roll Control Payload Ground Station Code V. 0.6.1
+   Notre Dame Rocket Team Roll Control Payload Ground Station Code V. 0.6.2
    Aidan McDonald, 2/8/17
    Kyle Miller, 2/2/17
 
    Most recent changes:
-   Changed the packet-processing code to match the flight code (v. 1.0.4)
+   Changed the packet-processing code to match the flight code (v. 1.1.0)
 
    To-dones:
    Basic radio transmit-receive architecture in place
-   Reconfigured packet processing code to properly match the current flight code (v. 1.0.4)
+   Reconfigured packet processing code to properly match the current flight code (v. 1.1.0)
    Added error messages for every current failure mode
    All data now goes to an LCD! (Wiring correctness TBD)
 
@@ -185,9 +185,17 @@ void loop()
         }
 
         else if (buf[1] == 0) { //buf[1] is the sensor "sleep mode" flag
-          lcd.print("Waiting for data");
+          float batteryLevel;
+          for (int c = 0; c < 4; c++) {
+            u.tempBuff[c] = buf[c + 8];
+          }
+          batteryLevel = u.tempFloat;
+          
+          lcd.print("Battery Level:");
           lcd.setCursor(0, 1);
-          lcd.print("recording auth.");
+          lcd.print(batteryLevel, 3);
+          lcd.setCursor(8,1);
+          lcd.print("%");
         }
 
         else if (buf[5] == true) { //buf[5] is the GPS enabled flag

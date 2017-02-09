@@ -1,12 +1,13 @@
 /*
-   Notre Dame Rocket Team Roll Control Payload Master Code V. 1.0.4
+   Notre Dame Rocket Team Roll Control Payload Master Code V. 1.1.0
    Aidan McDonald, 2/8/17
    Kyle Miller, 2/2/17
 
    Most recent changes:
-   Figured out what makes the SD card work and changed the initialization code accordingly
-   Added a flag which notes whether the SD was initialized properly
-   Reconfigured the packet code to include the above flag
+   Added radio transmission of battery charge levels
+   Reconfigured the packet-processing code to use a variable address
+   Revised how/when the code reads sensor data to ensure proper inputs
+   
 
    To-dones:
     Basic switch-case structure
@@ -17,13 +18,10 @@
     Running-average calcs for critical sensor values and Simpson's Rule integration of gyro data
     Multi-sensor verification of flight progress switch-case transitions
     Github Sync system working
-    Packet transmission/reception over radio (ADD THIS TO GROUND STATION CODE TOO!!)
+    Packet transmission/reception over radio
     Roll control subroutine reconfigured for new servo mode
 
    To-dos:
-    Revise how the packet code handles buffer addresses? I'm getting tired of having to change a bunch of numbers
-    every time we change the packet contents...
-    Confirm whether positive=clockwise for the servo
     Revise and enhance the staging/thresholds, particularly burnout/apogee accel values
     Reconfigure the SD datalogging section to allow for easy spreadsheet conversion
     Test List:
@@ -103,6 +101,9 @@ int finPosition = CENTER; //Since the servo moves based on increments and not ab
 bool servoPowerFlag = false;
 const int servoPowerPin = 3; //Flag and pin to power on/off the servo with a transistor
 
+const int batteryPin = 9; //Built-in power tracking pin
+float batteryLevel = 100; //Battery power, in percentage
+
 //Constants for flight staging
 const int waiting = 0;
 const int launched = waiting + 1;
@@ -121,6 +122,7 @@ const int LANDED_BARO_THRESHOLD = 6;
 const int MIN_ROLL_THRESHOLD = 0;
 
 const int GPS_BARO_THRESHOLD = 200; //600 feet/200m is when the recovery system deploys
+const int MAX_PACKET_SIZE = 23; //The one and only constant you will ever need to update for packet-related reasons
 
 bool startRollFlag = false;
 bool endRollFlag = false; //Flags for tracking roll/counter-roll progress
@@ -148,6 +150,7 @@ void setup() {
   pinMode(statePinA, OUTPUT);
   pinMode(statePinB, OUTPUT);
   pinMode(servoPowerPin, OUTPUT);
+  pinMode(batteryPin, INPUT);
 
   accel.begin();
   bmp.begin();
@@ -155,7 +158,7 @@ void setup() {
   gyro.begin();//Initialize the sensors
 
   SD.begin(stupidSDPin);
-  if (!SD.begin(cardSelectPin);) //Initialize the SD card; set a flag if the initialization fails
+  if (!SD.begin(cardSelectPin)) //Initialize the SD card; set a flag if the initialization fails
     sdWorkingFlag = false;
 
   digitalWrite(controlPin, LOW); //Set the servo control pin to low to make sure it doesn't pulse accidentally
@@ -192,14 +195,11 @@ void loop() {
 
   /* Get a new sensor event */
   sensors_event_t mainEvent;
-  gyro.getEvent(&mainEvent);
-  accel.getEvent(&mainEvent); // Assume Z-axis is vertical for accel/gyro?
-  bmp.getEvent(&mainEvent);
 
   if (masterEnableFlag) //Only save/buffer data if we're actively sensing data
   {
     Record_Data(mainEvent);//Save sensor data (accel, baro, time, GPS) to the SD card
-    BufferUpdate(mainEvent);
+    BufferUpdate();
   }
 
   if (gpsOnFlag)
@@ -331,19 +331,27 @@ void Set_Servo(int current, int goal) { //Subroutine which takes current positio
 
 void Record_Data(sensors_event_t event) { //Subroutine for saving sensor data to the SD card
 
-  float temperature;
-  bmp.getTemperature(&temperature);
-
   //Fill data buffers with sensor readings
-  accelData[0] = event.acceleration.x;
-  accelData[1] = event.acceleration.y;
-  accelData[2] = event.acceleration.z;
+  gyro.getEvent(&event);
   gyroData[0] = event.gyro.x;
   gyroData[1] = event.gyro.y;
   gyroData[2] = event.gyro.z;
+  
+  accel.getEvent(&event);
+  accelData[0] = event.acceleration.x;
+  accelData[1] = event.acceleration.y;
+  accelData[2] = event.acceleration.z;
+
+  bmp.getEvent(&event);
+  float temperature;
+  bmp.getTemperature(&temperature);
   baroData[0] = event.pressure;
   baroData[1] = temperature;
   baroData[2] = bmp.pressureToAltitude(seaLevelPressure, event.pressure);
+
+  batteryLevel = analogRead(batteryPin);
+  batteryLevel *= 0.1534598214;  //Read the battery level and convert to a percentage
+  
   timeData[0] = millis();
   timeData[1] = millis() - startTime;
 
@@ -419,18 +427,26 @@ void Radio_Transmit(void) {
     dataFlag = false; //Only turn off this flag if Arduino is actively sending data
     sendFlag = false; //Once we send data, wait for data to be received
 
-    uint8_t radioPacket[23]; //Buffer of bytes for radio transmission
-    int packetSize = 23; //Depending on the flight state, the actual packet size may change
+    uint8_t radioPacket[MAX_PACKET_SIZE]; //Buffer of bytes for radio transmission
+    int packetSize; //Depending on the flight state, the actual packet size may change
+    int packAddr = 0; //Variable for counting address states
 
-    radioPacket[0] = flightState; //Start every packet with the current flight staging (lets the receiver know what data is going to come at the end of the packet)
-    radioPacket[1] = masterEnableFlag;
-    radioPacket[2] = finOverrideFlag; //Report back on the perceived state of affairs with the critical flags, in order for adjustments to be made if necessary.
-    radioPacket[3] = servoPowerFlag;
-    radioPacket[4] = 42; //Answer to life, the universe, and everything. Used to confirm packet validity.
+    radioPacket[packAddr] = flightState; //Start every packet with the current flight staging (lets the receiver know what data is going to come at the end of the packet)
+    packAddr++;
+    radioPacket[packAddr] = masterEnableFlag;
+    packAddr++;
+    radioPacket[packAddr] = finOverrideFlag; //Report back on the perceived state of affairs with the critical flags, in order for adjustments to be made if necessary.
+    packAddr++;
+    radioPacket[packAddr] = servoPowerFlag;
+    packAddr++;
+    radioPacket[packAddr] = 42; //Answer to life, the universe, and everything. Used to confirm packet validity.
+    packAddr++;
 
-    radioPacket[5] = gpsOnFlag;
-    radioPacket[6] = finPosition; //The next items in each packet report the outputs to the servo and whether we are running GPS.
-    radioPacket[7] = sdWorkingFlag;
+    radioPacket[packAddr] = gpsOnFlag;
+    packAddr++;
+    radioPacket[packAddr] = finPosition; //The next items in each packet report the outputs to the servo and whether we are running GPS.
+    packAddr++;
+    radioPacket[packAddr] = sdWorkingFlag;
 
     union { //Float-to-byte-string converter, needed for floating-point sensor data
       float tempFloat;
@@ -438,32 +454,45 @@ void Radio_Transmit(void) {
     } u;
 
     if (!masterEnableFlag) {
-      packetSize = 7; //If sensors aren't enabled yet, only send the above data
+      //If sensors aren't enabled yet, send battery data
+      u.tempFloat = batteryLevel;
+      for (int c = 0; c < 4; c++) {
+        packAddr++;
+        radioPacket[packAddr] = u.tempArray[c];
+      }
     }
 
     else if (gpsOnFlag)
     {
+      packAddr++;
       u.tempFloat = gpsLatitude;
       for (int c = 0; c < 4; c++) {
-        radioPacket[c + 8] = u.tempArray[c];
+        radioPacket[packAddr] = u.tempArray[c];
+        packAddr++;
       }
-      radioPacket[12] = gpsLatDirect; //N or S
+      radioPacket[packAddr] = gpsLatDirect; //N or S
+      packAddr++;
       u.tempFloat = gpsLongitude;
       for (int c = 0; c < 4; c++) {
-        radioPacket[(c + 13)] = u.tempArray[c];
+        radioPacket[packAddr] = u.tempArray[c];
+        packAddr++;
       }
-      radioPacket[17] = gpsLonDirect; //E or W
+      radioPacket[packAddr] = gpsLonDirect; //E or W
+      packAddr++;
       u.tempFloat = gpsAltitude;
       for (int c = 0; c < 4; c++) {
-        radioPacket[(c + 18)] = u.tempArray[c];
+        radioPacket[packAddr] = u.tempArray[c];
+        packAddr++;
       }
-      radioPacket[22] = gpsFix;
-      radioPacket[23] = gpsFixQuality; //Useful for determining valid/invalid GPS data; if fix or quality are 0 the data isn't reliable
+      radioPacket[packAddr] = gpsFix;
+      packAddr++;
+      radioPacket[packAddr] = gpsFixQuality; //Useful for determining valid/invalid GPS data; if fix or quality are 0 the data isn't reliable
     }
 
     else if (flightState = burnout) {
 
-      radioPacket[8] = endRollFlag; //If we're in burnout, send the "end roll flag." It determines whether we send the running tally (float) or the current rotation speed (int)
+      packAddr++;
+      radioPacket[packAddr] = endRollFlag; //If we're in burnout, send the "end roll flag." It determines whether we send the running tally (float) or the current rotation speed (int)
 
       if (endRollFlag) {
         union { //Since we're sending an integer, we need a different-sized memory union to work with
@@ -472,17 +501,18 @@ void Radio_Transmit(void) {
         } uInt;
 
         uInt.tempInt = gyroData[2];
-        radioPacket[9] = uInt.tempArray[0];
-        radioPacket[10] = uInt.tempArray[1];
-        packetSize = 10;
+        packAddr++;
+        radioPacket[packAddr] = uInt.tempArray[0];
+        packAddr++;
+        radioPacket[packAddr] = uInt.tempArray[1];
       }
 
       else {
         u.tempFloat = rotationCounter;
         for (int c = 0; c < 4; c++) {
-          radioPacket[(c + 9)] = u.tempArray[c];
+          packAddr++;
+          radioPacket[packAddr] = u.tempArray[c];
         }
-        packetSize = 12;
       }
 
     }
@@ -490,11 +520,12 @@ void Radio_Transmit(void) {
     else { //If we're not in the burnout phase and haven't turned on the GPS, then send current altitude
       u.tempFloat = baroData[2];
       for (int c = 0; c < 4; c++) {
-        radioPacket[(c + 8)] = u.tempArray[c];
+        packAddr++;
+        radioPacket[packAddr] = u.tempArray[c];
       }
-      packetSize = 11;
     }
 
+    packetSize = packAddr; //Update the packet size to match the most recently used address
 
     rf95.send((uint8_t *)radioPacket, packetSize); //Once packet has been constructed, transmit
     rf95.waitPacketSent(); //Short, necessary wait for packet transmission to complete
@@ -543,7 +574,7 @@ void Radio_Transmit(void) {
 
 
 
-void BufferUpdate(sensors_event_t event) { //Function to keep a running buffer of select sensor values needed for data averaging (or numerical integration)
+void BufferUpdate() { //Function to keep a running buffer of select sensor values needed for data averaging (or numerical integration)
 
   accelAverage = 0;
   baroAverage = 0;
@@ -552,15 +583,15 @@ void BufferUpdate(sensors_event_t event) { //Function to keep a running buffer o
     accelZBuffer[4 - c] = accelZBuffer[3 - c];
     baroAltBuffer[4 - c] = baroAltBuffer[3 - c];
   }
-  accelZBuffer[0] = event.acceleration.z;
-  baroAltBuffer[0] = bmp.pressureToAltitude(seaLevelPressure, event.pressure);
+  accelZBuffer[0] = accelData[2];
+  baroAltBuffer[0] = baroData[2]; //This always runs after Record_Data, so the data buffers should always be up-to-date
 
   for (int c = 0; c < 5; c++) {
     accelAverage = accelAverage + accelZBuffer[c];
     baroAverage = baroAverage + baroAltBuffer[c];
   }
-  accelAverage = accelAverage / 5;
-  baroAverage = baroAverage / 5;
+  accelAverage /= 5;
+  baroAverage /= 5;
   baroAverage = baroAverage - startAlt; //Have to compare the average to the ground, not sea level
 
   if (flightState == burnout && !endRollFlag) { //Keep track of rotations once we transition to the burnout stage
@@ -575,7 +606,7 @@ void BufferUpdate(sensors_event_t event) { //Function to keep a running buffer o
         gyroZBuffer[6 - c] = gyroZBuffer[5 - c];
       }
       timeBuffer[0] = millis();
-      gyroZBuffer[0] = event.gyro.z;
+      gyroZBuffer[0] = gyroData[2]; //Again, this buffer should be up-to-date
 
     }
 
