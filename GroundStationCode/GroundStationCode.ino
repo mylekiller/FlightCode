@@ -1,10 +1,11 @@
 /*
-   Notre Dame Rocket Team Roll Control Payload Ground Station Code V. 0.6.2
+   Notre Dame Rocket Team Roll Control Payload Ground Station Code V. 1.1.1
    Aidan McDonald, 2/8/17
    Kyle Miller, 2/2/17
 
    Most recent changes:
-   Changed the packet-processing code to match the flight code (v. 1.1.0)
+   Added Basic Display Mode Shifting for LCD, 0 keeps defaults based on flgiht 
+   status, other modes force different LCD outputs (v. 1.1.1)
 
    To-dones:
    Basic radio transmit-receive architecture in place
@@ -74,6 +75,7 @@ int flightState;
 const int masterEnablePin = 0;
 const int finOverridePin = 1;
 const int servoPowerPin = 2; //Digital inputs for important flags- CHANGE THESE TO FIT REAL WORLD!!
+const int buttonPin = 3;
 
 
 
@@ -82,6 +84,7 @@ void setup()
   pinMode(masterEnablePin, INPUT);
   pinMode(finOverridePin, INPUT);
   pinMode(servoPowerPin, INPUT);
+  pinMode(buttonPin, INPUT);
   pinMode(RFM95_RST, OUTPUT);
   digitalWrite(RFM95_RST, HIGH);
 
@@ -111,6 +114,19 @@ void setup()
 
 void loop()
 {
+  int buttonState = 0;
+  if (digitalRead(buttonPin) == HIGH) {
+    if (buttonState == 4) {
+      buttonState = 0;
+    }
+    else {
+      buttonState++;
+    }
+  }
+  lcd.clear(); //Clear LCD to print new data
+  lcd.setCursor(0,15);
+  lcd.print(buttonState);
+  
 
   if (sendFlag) { //Transmit select commands to the payload
 
@@ -164,6 +180,8 @@ void loop()
     {
       sendFlag = true;
       lcd.clear(); //Clear the LCD since new data is incoming
+      lcd.setCursor(15,1);
+      lcd.print(buttonState);
       lcd.setCursor(0, 0); //Return cursor to the origin
 
       // Should be a message for us now
@@ -184,7 +202,7 @@ void loop()
           lcd.print("ERR: Bad Header"); //42 in slot 4 is the header's backup validity check
         }
 
-        else if (buf[1] == 0) { //buf[1] is the sensor "sleep mode" flag
+        else if ((buf[1] == 0 && buttonState == 0) || (buttonState == 1)) { //buf[1] is the sensor "sleep mode" flag
           float batteryLevel;
           for (int c = 0; c < 4; c++) {
             u.tempBuff[c] = buf[c + 8];
@@ -198,7 +216,7 @@ void loop()
           lcd.print("%");
         }
 
-        else if (buf[5] == true) { //buf[5] is the GPS enabled flag
+        else if ((buf[5] == true && buttonState == 0) || (buttonState == 2 && buf[5] == true)) { //buf[5] is the GPS enabled flag
           float latitude;
           float longitude;
           float altitude;
@@ -238,7 +256,7 @@ void loop()
           }
         }
 
-        else if (flightState == burnout) { //This indicates we are in the roll-controll phase
+        else if ((flightState == burnout && buttonState == 0) || buttonState == 3) { //This indicates we are in the roll-controll phase or that we want flight status
 
           if (buf[8] == 0) { //This flag being false indicates the payload is still trying to complete its two revolutions, so completed revolutions are tracked
             float completedRevs;
@@ -250,7 +268,7 @@ void loop()
             lcd.setCursor(0, 1);
             lcd.print(completedRevs, 7);
           }
-          else { //If the flag is true, rotational velocity is tracked
+          else if(buf[8] == 1) { //If the flag is true, rotational velocity is tracked
             int rotationVel;
             union { //Since we're receiving an integer, we need a different-sized memory union to work with
               int tempInt;
@@ -265,9 +283,25 @@ void loop()
             lcd.setCursor(6, 1);
             lcd.print("rad/s");
           }
+          else {
+            switch (flightState) {
+              case 0:
+                lcd.print("Waiting");
+                break;
+              case 1:
+                lcd.print("Launched");
+                break;
+              case 3:
+                lcd.print("Falling");
+                break;
+              case 4:
+                lcd.print("Landed");
+                break;
+            }
+          }
         }
 
-        else { //If none of the other conditions are met, altitude data is transmitted
+        else if (buttonState == 0 || buttonState == 4){ //If none of the other conditions are met, altitude data is transmitted
           float altitude;
           for (int c = 0; c < 4; c++) {
             u.tempBuff[c] = buf[c + 8];
