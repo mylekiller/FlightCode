@@ -1,5 +1,5 @@
 /*
-   Notre Dame Rocket Team Roll Control Payload Ground Station Code V. 1.1.3
+   Notre Dame Rocket Team Roll Control Payload Ground Station Code V. 1.1.4
    Aidan McDonald, 2/12/17
    Kyle Miller, 2/8/17
 
@@ -7,7 +7,7 @@
    Display-shifting code overhauled- previous configuration printed certain data subsets
    regardless of whether that data was part of the incoming packet. Current version receives data,
    then once the packet has been processed runs a switch-case based on the button input to
-   determine what to print to the LCD.
+   determine what to print to the LCD. (Added several new display modes as well- flag-confirmation, sd-check)
    Also slightly modified the button code to prevent multi-incrementing for each time the button is pushed
    Added code to control several LEDs- whether the fin override is in place, whether the servo has power,
    whether communications are working, and three which indicate the fin position
@@ -140,22 +140,20 @@ void setup()
 
 void loop()
 {
-  static int buttonState = 0; //Button-display-toggle-tracking variable; has 4 potential display states
+  static int buttonState = 0; //Button-display-toggle-tracking variable; has 5 potential display states
   static bool buttonFlag = false; //Variable to prevent infinite cycline when the button is pushed
 
-if(millis() > lastRxTime + packetTimeDelay)//Update the communications LED
-  digitalWrite(packetLED, LOW);
+  if (millis() > lastRxTime + packetTimeDelay) //Update the communications LED
+    digitalWrite(packetLED, LOW);
   else
-  digitalWrite(packetLED, HIGH); 
+    digitalWrite(packetLED, HIGH);
 
   if (digitalRead(buttonPin) == HIGH) {
     if (!buttonFlag) {
       buttonFlag = true; //Note that we've pushed the button, so that the counter only increments once
-      if (buttonState == 4) {
+      buttonState++;
+      if (buttonState == 5) {
         buttonState = 0;
-      }
-      else {
-        buttonState++;
       }
       lcd.setCursor(15, 1);
       lcd.print(buttonState);  //Update the button state on the LCD
@@ -253,7 +251,7 @@ if(millis() > lastRxTime + packetTimeDelay)//Update the communications LED
       if (rf95.recv(buf, &len)) //Fills 'buf' with data, returns false if an error occurs
       {
 
-      lastRxTime = millis();
+        lastRxTime = millis();
 
         union { //Memory union used for the majority of data processing
           uint8_t tempBuff[3];
@@ -419,7 +417,19 @@ if(millis() > lastRxTime + packetTimeDelay)//Update the communications LED
                 break;
             }
             break;
-          case 3: //Case 3 displays GPS altitude data if the GPS is enabled
+          case 3:
+            if (buf[7]) { //Datum 7 is the SD-working flag
+              lcd.print("SD Recording:");
+              lcd.setCursor(0, 1);
+              lcd.print("Working");
+            }
+            else {
+              lcd.print("SD Recording:");
+              lcd.setCursor(0, 1);
+              lcd.print("Failure");
+            }
+            break;
+          case 4: //Case 4 displays GPS altitude data if the GPS is enabled
             if (buf[5] == true) {
               if (gpsFix == 0 || gpsQuality == 0) {
                 lcd.print("No GPS fix.");
@@ -439,34 +449,34 @@ if(millis() > lastRxTime + packetTimeDelay)//Update the communications LED
         }
 
         //Once data to the LCD have been displayed, update the LEDs with appropriate data
-        if(buf[2] == 1) //Confirmation of the Fin Override Flag
-        digitalWrite(finOverLED, HIGH);
+        if (buf[2] == 1) //Confirmation of the Fin Override Flag
+          digitalWrite(finOverLED, HIGH);
         else
-        digitalWrite(finOverLED, LOW);
+          digitalWrite(finOverLED, LOW);
 
-        if(buf[3] == 1) //Confirmation of the Servo Power Flag
-        digitalWrite(finOnLED, HIGH);
+        if (buf[3] == 1) //Confirmation of the Servo Power Flag
+          digitalWrite(finOnLED, HIGH);
         else
-        digitalWrite(finOnLED, LOW);
+          digitalWrite(finOnLED, LOW);
 
-        switch(buf[6]) { //Reports fin-position data
+        switch (buf[6]) { //Reports fin-position data
           case LEFT:
-          digitalWrite(finLLED, HIGH);
-          digitalWrite(finCLED, LOW);
-          digitalWrite(finRLED, LOW);
-          break;
+            digitalWrite(finLLED, HIGH);
+            digitalWrite(finCLED, LOW);
+            digitalWrite(finRLED, LOW);
+            break;
           case CENTER:
-          digitalWrite(finLLED, LOW);
-          digitalWrite(finCLED, HIGH);
-          digitalWrite(finRLED, LOW);
-          break;
+            digitalWrite(finLLED, LOW);
+            digitalWrite(finCLED, HIGH);
+            digitalWrite(finRLED, LOW);
+            break;
           case RIGHT:
-          digitalWrite(finLLED, LOW);
-          digitalWrite(finCLED, LOW);
-          digitalWrite(finRLED, HIGH);
-          break;
+            digitalWrite(finLLED, LOW);
+            digitalWrite(finCLED, LOW);
+            digitalWrite(finRLED, HIGH);
+            break;
         }
-        
+
       }
       else //If the data-retrieval statement returns FALSE, the packet is bad
         lcd.print("ERR: Bad Packet");
