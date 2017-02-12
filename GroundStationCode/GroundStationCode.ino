@@ -1,5 +1,5 @@
 /*
-   Notre Dame Rocket Team Roll Control Payload Ground Station Code V. 1.1.2
+   Notre Dame Rocket Team Roll Control Payload Ground Station Code V. 1.1.3
    Aidan McDonald, 2/12/17
    Kyle Miller, 2/8/17
 
@@ -9,17 +9,17 @@
    then once the packet has been processed runs a switch-case based on the button input to
    determine what to print to the LCD.
    Also slightly modified the button code to prevent multi-incrementing for each time the button is pushed
+   Added code to control several LEDs- whether the fin override is in place, whether the servo has power,
+   whether communications are working, and three which indicate the fin position
 
    To-dones:
    Basic radio transmit-receive architecture in place
-   Reconfigured packet processing code to properly match the current flight code (v. 1.1.0)
+   Reconfigured packet processing code to properly match the current flight code (v. 1.1.3)
    Added error messages for every current failure mode
    All data now goes to an LCD! (Wiring correctness TBD)
 
    To-dos:
-   Determine how many signal LEDS will be used and for what purpose.
    Figure out what other buttons and switches we have (if any) and what they need to do
-
 
 */
 
@@ -60,9 +60,9 @@ bool sendFlag = false;
 bool radioWorkingFlag = true;
 
 //Constants for packet interpretation
-const int LEFT = 0;
+const int RIGHT = 0;
 const int CENTER = 1;
-const int RIGHT = 2;
+const int LEFT = 2;
 
 const int waiting = 0;
 const int launched = waiting + 1;
@@ -71,10 +71,20 @@ const int falling = burnout + 1;
 const int landed = falling + 1;
 int flightState;
 
+//I/O pins
 const int masterEnablePin = 0;
 const int finOverridePin = 1;
 const int servoPowerPin = 2; //Digital inputs for important flags- CHANGE THESE TO FIT REAL WORLD!!
-const int buttonPin = 3;
+const int buttonPin = 3;//Input to toggle display modes
+const int packetLED = 4; //Output pins for display LEDs
+const int finOverLED = 5;
+const int finLLED = 6;
+const int finRLED = 7;
+const int finCLED = 8;
+const int finOnLED = 9;
+
+int packetTimeDelay = 5000; //Number of milliseconds the comms LED stays on for between valid packets
+float lastRxTime = 0;
 
 bool masterEnableFlag = false;
 bool finOverrideFlag = false; //Flags for comparison w/ the payload's self-reporting
@@ -96,6 +106,13 @@ void setup()
   pinMode(buttonPin, INPUT);
   pinMode(RFM95_RST, OUTPUT);
   digitalWrite(RFM95_RST, HIGH);
+
+  pinMode(packetLED, OUTPUT);
+  pinMode(finOverLED, OUTPUT);
+  pinMode(finLLED, OUTPUT);
+  pinMode(finCLED, OUTPUT);
+  pinMode(finRLED, OUTPUT);
+  pinMode(finOnLED, OUTPUT);
 
   // manual radio reset
   digitalWrite(RFM95_RST, LOW);
@@ -125,6 +142,11 @@ void loop()
 {
   static int buttonState = 0; //Button-display-toggle-tracking variable; has 4 potential display states
   static bool buttonFlag = false; //Variable to prevent infinite cycline when the button is pushed
+
+if(millis() > lastRxTime + packetTimeDelay)//Update the communications LED
+  digitalWrite(packetLED, LOW);
+  else
+  digitalWrite(packetLED, HIGH); 
 
   if (digitalRead(buttonPin) == HIGH) {
     if (!buttonFlag) {
@@ -230,6 +252,8 @@ void loop()
 
       if (rf95.recv(buf, &len)) //Fills 'buf' with data, returns false if an error occurs
       {
+
+      lastRxTime = millis();
 
         union { //Memory union used for the majority of data processing
           uint8_t tempBuff[3];
@@ -370,7 +394,7 @@ void loop()
                 lcd.setCursor(3, 1);
                 lcd.print("2:X");
               }
-              if (buf[1] != servoPowerFlag) {
+              if (buf[3] != servoPowerFlag) {
                 lcd.setCursor(12, 1);
                 lcd.print("3:X");
               }
@@ -413,6 +437,36 @@ void loop()
             }
             break;
         }
+
+        //Once data to the LCD have been displayed, update the LEDs with appropriate data
+        if(buf[2] == 1) //Confirmation of the Fin Override Flag
+        digitalWrite(finOverLED, HIGH);
+        else
+        digitalWrite(finOverLED, LOW);
+
+        if(buf[3] == 1) //Confirmation of the Servo Power Flag
+        digitalWrite(finOnLED, HIGH);
+        else
+        digitalWrite(finOnLED, LOW);
+
+        switch(buf[6]) { //Reports fin-position data
+          case LEFT:
+          digitalWrite(finLLED, HIGH);
+          digitalWrite(finCLED, LOW);
+          digitalWrite(finRLED, LOW);
+          break;
+          case CENTER:
+          digitalWrite(finLLED, LOW);
+          digitalWrite(finCLED, HIGH);
+          digitalWrite(finRLED, LOW);
+          break;
+          case RIGHT:
+          digitalWrite(finLLED, LOW);
+          digitalWrite(finCLED, LOW);
+          digitalWrite(finRLED, HIGH);
+          break;
+        }
+        
       }
       else //If the data-retrieval statement returns FALSE, the packet is bad
         lcd.print("ERR: Bad Packet");

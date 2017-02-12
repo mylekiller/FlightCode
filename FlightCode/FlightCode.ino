@@ -1,12 +1,11 @@
 /*
-   Notre Dame Rocket Team Roll Control Payload Master Code V. 1.1.0
-   Aidan McDonald, 2/8/17
+   Notre Dame Rocket Team Roll Control Payload Master Code V. 1.1.2
+   Aidan McDonald, 2/12/17
    Kyle Miller, 2/2/17
 
    Most recent changes:
-   Added radio transmission of battery charge levels
-   Reconfigured the packet-processing code to use a variable address
-   Revised how/when the code reads sensor data to ensure proper inputs
+   Minor changes to the fin-canting logic: corrected a few typos; reconfigured the
+   code to take note that, for both the gyro and servo, positive values are counterclockwise.
 
 
    To-dones:
@@ -14,7 +13,7 @@
     Incorporation of Adafruit sensor code
     Added GPS functionality
     Integration of radio-transmission/reception code
-    Datalogging capacity (untested)
+    Datalogging capacity
     Running-average calcs for critical sensor values and Simpson's Rule integration of gyro data
     Multi-sensor verification of flight progress switch-case transitions
     Github Sync system working
@@ -93,9 +92,9 @@ long flightTime = 0;
 const int controlPin = 0; //"control" is the pin which is pulsed to trigger the servo to move
 const int statePinA = 1; //The state of pins A and B determines which of four motions the servo takes when the control pin is pulsed.
 const int statePinB = 2; // If B is low, move 1 position, if B is high, move two positions. High A is negative (counterclockwise?), low A is positive (clockwise?)
-const int LEFT = 0;
+const int RIGHT = 0;
 const int CENTER = 1;
-const int RIGHT = 2;
+const int LEFT = 2;
 int finPosition = CENTER; //Since the servo moves based on increments and not absolute positions, these constants and variable are needed to track the fins' position.
 
 bool servoPowerFlag = false;
@@ -220,7 +219,7 @@ void loop() {
     */
 
     case waiting:
-      if (accelAverage > LIFTOFF_ACCEL_THRESHOLD && masterEnableFlag)
+      if ((accelAverage > LIFTOFF_ACCEL_THRESHOLD) && masterEnableFlag)
       {
         flightState = launched;
         startTime = millis();
@@ -229,7 +228,7 @@ void loop() {
 
 
     case launched:
-      if (abs(accelAverage) < BURNOUT_ACCEL_THRESHOLD || baroAverage > BURNOUT_BARO_THRESHOLD || flightTime > BURNOUT_TIME_THRESHOLD)
+      if ((abs(accelAverage) < BURNOUT_ACCEL_THRESHOLD) || (baroAverage > BURNOUT_BARO_THRESHOLD) || (flightTime > BURNOUT_TIME_THRESHOLD))
       {
         flightState = burnout;
       }
@@ -240,7 +239,7 @@ void loop() {
 
       Roll_Control(mainEvent);
 
-      if (accelAverage > APOGEE_ACCEL_THRESHOLD || flightTime > APOGEE_TIME_THRESHOLD) //Add a baro test here?
+      if ((accelAverage > APOGEE_ACCEL_THRESHOLD) || (flightTime > APOGEE_TIME_THRESHOLD)) //Add a baro test here?
       {
         flightState = falling;
       }
@@ -273,8 +272,8 @@ void Roll_Control(sensors_event_t event) {
 
   if (!startRollFlag) { //For roll initialization, cant fins in the direction of current roll
     startRollFlag = true;
-    if (event.gyro.z > 0) {
-      Set_Servo(finPosition, LEFT); //This assumes positive gyro values are clockwise. CONFIRM THIS!!!
+    if (event.gyro.z < 0) {
+      Set_Servo(finPosition, LEFT); //Since negative values are clockwise
     }
     else {
       Set_Servo(finPosition, RIGHT);
@@ -292,11 +291,11 @@ void Roll_Control(sensors_event_t event) {
     {
       Set_Servo(finPosition, CENTER);
     }
-    else if (event.gyro.z > 0) //Again, this assumes positive gyro values are clockwise.
+    else if (event.gyro.z < 0)
     {
       Set_Servo(finPosition, RIGHT);
     }
-    else if (event.gyro.z < 0)
+    else if (event.gyro.z > 0)
     {
       Set_Servo(finPosition, LEFT);
     }
@@ -314,10 +313,10 @@ void Set_Servo(int current, int goal) { //Subroutine which takes current positio
     else
       digitalWrite(statePinB, LOW);
 
-    if (current - goal > 0) //This assumes positive servo direction is clockwise. CONFIRM THIS IS THE CASE!!!
+    if (current < goal) //If current < goal, we are rotating from right to left: counterclockwise: positive, so A should be low
       digitalWrite(statePinA, LOW);
-    else
-      digitalWrite(statePinB, HIGH);
+    else//Otherwise, we are rotating from left to right: clockwise: negative, so A should be high
+      digitalWrite(statePinA, HIGH);
 
     digitalWrite(controlPin, HIGH); //Once the output pins have been set properly, pulse the control pin to update the servo.
     delay(2);
