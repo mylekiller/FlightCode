@@ -7,7 +7,7 @@
    Added radio transmission of battery charge levels
    Reconfigured the packet-processing code to use a variable address
    Revised how/when the code reads sensor data to ensure proper inputs
-   
+
 
    To-dones:
     Basic switch-case structure
@@ -336,7 +336,7 @@ void Record_Data(sensors_event_t event) { //Subroutine for saving sensor data to
   gyroData[0] = event.gyro.x;
   gyroData[1] = event.gyro.y;
   gyroData[2] = event.gyro.z;
-  
+
   accel.getEvent(&event);
   accelData[0] = event.acceleration.x;
   accelData[1] = event.acceleration.y;
@@ -351,7 +351,7 @@ void Record_Data(sensors_event_t event) { //Subroutine for saving sensor data to
 
   batteryLevel = analogRead(batteryPin);
   batteryLevel *= 0.1534598214;  //Read the battery level and convert to a percentage
-  
+
   timeData[0] = millis();
   timeData[1] = millis() - startTime;
 

@@ -1,11 +1,14 @@
 /*
-   Notre Dame Rocket Team Roll Control Payload Ground Station Code V. 1.1.1
-   Aidan McDonald, 2/8/17
-   Kyle Miller, 2/2/17
+   Notre Dame Rocket Team Roll Control Payload Ground Station Code V. 1.1.2
+   Aidan McDonald, 2/12/17
+   Kyle Miller, 2/8/17
 
    Most recent changes:
-   Added Basic Display Mode Shifting for LCD, 0 keeps defaults based on flgiht 
-   status, other modes force different LCD outputs (v. 1.1.1)
+   Display-shifting code overhauled- previous configuration printed certain data subsets
+   regardless of whether that data was part of the incoming packet. Current version receives data,
+   then once the packet has been processed runs a switch-case based on the button input to
+   determine what to print to the LCD.
+   Also slightly modified the button code to prevent multi-incrementing for each time the button is pushed
 
    To-dones:
    Basic radio transmit-receive architecture in place
@@ -14,10 +17,6 @@
    All data now goes to an LCD! (Wiring correctness TBD)
 
    To-dos:
-   Write more involved display code? Lots of data we aren't displaying.
-   As to the above, maybe a button installed which shifts through different data modes?
-   For example, the LCD could display whether the payload and ground station are on the same page in terms of the three command flags
-   Also, no room currently for GPS altitude data or payload flight state- display mode(s) for those?
    Determine how many signal LEDS will be used and for what purpose.
    Figure out what other buttons and switches we have (if any) and what they need to do
 
@@ -77,6 +76,16 @@ const int finOverridePin = 1;
 const int servoPowerPin = 2; //Digital inputs for important flags- CHANGE THESE TO FIT REAL WORLD!!
 const int buttonPin = 3;
 
+bool masterEnableFlag = false;
+bool finOverrideFlag = false; //Flags for comparison w/ the payload's self-reporting
+bool servoPowerFlag = false;
+
+const int error = 0;
+const int battery = 1; //Constants for the display switch-case statement
+const int gps = 2;
+const int burnoutA = 3;
+const int burnoutB = 4;
+const int baro = 5;
 
 
 void setup()
@@ -114,23 +123,32 @@ void setup()
 
 void loop()
 {
-  int buttonState = 0;
+  static int buttonState = 0; //Button-display-toggle-tracking variable; has 4 potential display states
+  static bool buttonFlag = false; //Variable to prevent infinite cycline when the button is pushed
+
   if (digitalRead(buttonPin) == HIGH) {
-    if (buttonState == 4) {
-      buttonState = 0;
-    }
-    else {
-      buttonState++;
+    if (!buttonFlag) {
+      buttonFlag = true; //Note that we've pushed the button, so that the counter only increments once
+      if (buttonState == 4) {
+        buttonState = 0;
+      }
+      else {
+        buttonState++;
+      }
+      lcd.setCursor(15, 1);
+      lcd.print(buttonState);  //Update the button state on the LCD
+      lcd.setCursor(0, 0); //Return cursor to the origin
     }
   }
-  lcd.clear(); //Clear LCD to print new data
-  lcd.setCursor(0,15);
-  lcd.print(buttonState);
-  
+  else {
+    buttonFlag = false;
+  }
+
 
   if (sendFlag) { //Transmit select commands to the payload
 
     uint8_t data[8];
+
     //Send everything in triplicate, for verification/reliability/data clarity purposes.
     data[0] = digitalRead(masterEnablePin);
     data[1] = digitalRead(masterEnablePin); //Enables data processing
@@ -141,6 +159,13 @@ void loop()
     data[6] = digitalRead(servoPowerPin);
     data[7] = digitalRead(servoPowerPin); //Controls servo power
     data[8] = digitalRead(servoPowerPin);
+
+    if (data[1])
+      masterEnableFlag = true;
+    if (data[4])
+      finOverrideFlag = true; //Just like in the flight code, set flags true if the three overrides are ever pressed
+    if (data[7])
+      servoPowerFlag = true; //This allows us to compare what we've sent and what the payload does
 
     rf95.send(data, 8);
     rf95.waitPacketSent();
@@ -180,13 +205,28 @@ void loop()
     {
       sendFlag = true;
       lcd.clear(); //Clear the LCD since new data is incoming
-      lcd.setCursor(15,1);
-      lcd.print(buttonState);
+      lcd.setCursor(15, 1);
+      lcd.print(buttonState);  //Always print the display mode in the bottom-right corner of the screen
       lcd.setCursor(0, 0); //Return cursor to the origin
 
       // Should be a message for us now
       uint8_t buf[RH_RF95_MAX_MESSAGE_LEN];
       uint8_t len = sizeof(buf);
+
+      int dataCase; //Variable for tracking what data comes in
+
+      //Now instantiate a bunch of data variables; need to all be here because of the print section later on
+      float batteryLevel;
+      float latitude;
+      float longitude;
+      float altitude;
+      char latDirect;
+      char longDirect;
+      int gpsFix;
+      int gpsQuality;
+      float completedRevs;
+      int rotationVel;
+
 
       if (rf95.recv(buf, &len)) //Fills 'buf' with data, returns false if an error occurs
       {
@@ -200,30 +240,21 @@ void loop()
 
         if (buf[4] != 42) {
           lcd.print("ERR: Bad Header"); //42 in slot 4 is the header's backup validity check
+          dataCase = error;
         }
 
-        else if ((buf[1] == 0 && buttonState == 0) || (buttonState == 1)) { //buf[1] is the sensor "sleep mode" flag
-          float batteryLevel;
+        else if (buf[1] == 0) { //buf[1] is the sensor "sleep mode" flag
           for (int c = 0; c < 4; c++) {
             u.tempBuff[c] = buf[c + 8];
           }
           batteryLevel = u.tempFloat;
-          
-          lcd.print("Battery Level:");
-          lcd.setCursor(0, 1);
-          lcd.print(batteryLevel, 3);
-          lcd.setCursor(8,1);
-          lcd.print("%");
+
+          dataCase = battery;
         }
 
-        else if ((buf[5] == true && buttonState == 0) || (buttonState == 2 && buf[5] == true)) { //buf[5] is the GPS enabled flag
-          float latitude;
-          float longitude;
-          float altitude;
-          char latDirect;
-          char longDirect;
-          int gpsFix;
-          int gpsQuality;
+        else if (buf[5] == true) { //buf[5] is the GPS enabled flag
+
+          dataCase = gps;
 
           for (int c = 0; c < 4; c++) {
             u.tempBuff[c] = buf[c + 8];
@@ -242,34 +273,21 @@ void loop()
           gpsFix = buf[22];
           gpsQuality = buf[23];
 
-          if (gpsFix == 0 || gpsQuality == 0) {
-            lcd.print("No GPS Fix...");
-          }
-          else {
-            lcd.print(latitude, 7);
-            lcd.setCursor(11, 0);
-            lcd.print(latDirect);
-            lcd.setCursor(0, 1);
-            lcd.print(longitude, 7);
-            lcd.setCursor(11, 1);
-            lcd.print(longDirect);
-          }
         }
 
-        else if ((flightState == burnout && buttonState == 0) || buttonState == 3) { //This indicates we are in the roll-controll phase or that we want flight status
+        else if (flightState == burnout) { //This indicates we are in the roll-controll phase or that we want flight status
 
           if (buf[8] == 0) { //This flag being false indicates the payload is still trying to complete its two revolutions, so completed revolutions are tracked
-            float completedRevs;
+            dataCase = burnoutA;
+
             for (int c = 0; c < 4; c++) {
               u.tempBuff[c] = buf[c + 9];
             }
             completedRevs = u.tempFloat;
-            lcd.print("Revs Complete:");
-            lcd.setCursor(0, 1);
-            lcd.print(completedRevs, 7);
           }
-          else if(buf[8] == 1) { //If the flag is true, rotational velocity is tracked
-            int rotationVel;
+          else if (buf[8] == 1) { //If the flag is true, rotational velocity is tracked
+            dataCase = burnoutB;
+
             union { //Since we're receiving an integer, we need a different-sized memory union to work with
               int tempInt;
               byte tempArray[1];
@@ -277,19 +295,97 @@ void loop()
             uInt.tempArray[0] = buf[9];
             uInt.tempArray[1] = buf[10];
             rotationVel = uInt.tempInt;
-            lcd.print("Rotation Speed:");
-            lcd.setCursor(0, 1);
-            lcd.print(rotationVel);
-            lcd.setCursor(6, 1);
-            lcd.print("rad/s");
           }
-          else {
+        }
+
+        else { //If none of the other conditions are met, altitude data is transmitted
+          float altitude;
+          dataCase = baro;
+          for (int c = 0; c < 4; c++) {
+            u.tempBuff[c] = buf[c + 8];
+          }
+          altitude = u.tempFloat;
+        }
+
+        //If the data is good, print stuff based on what button state we're in
+        switch (buttonState) {
+          case 0: //Case 0 displays the primary packet data
+            switch (dataCase) {
+              case error:
+                //No need to display anything else in the error case
+                break;
+              case battery:
+                lcd.print("Battery Level:");
+                lcd.setCursor(0, 1);
+                lcd.print(batteryLevel, 3);
+                lcd.setCursor(8, 1);
+                lcd.print("%");
+                break;
+              case gps:
+                if (gpsFix == 0 || gpsQuality == 0) {
+                  lcd.print("No GPS Fix...");
+                }
+                else {
+                  lcd.print(latitude, 7);
+                  lcd.setCursor(11, 0);
+                  lcd.print(latDirect);
+                  lcd.setCursor(0, 1);
+                  lcd.print(longitude, 7);
+                  lcd.setCursor(11, 1);
+                  lcd.print(longDirect);
+                }
+                break;
+              case burnoutA:
+                lcd.print("Revs Complete:");
+                lcd.setCursor(0, 1);
+                lcd.print(completedRevs, 7);
+                break;
+              case burnoutB:
+                lcd.print("Rotation Speed:");
+                lcd.setCursor(0, 1);
+                lcd.print(rotationVel);
+                lcd.setCursor(6, 1);
+                lcd.print("rad/s");
+                break;
+              case baro:
+                lcd.print("Altitude: ");
+                lcd.setCursor(0, 1);
+                lcd.print(altitude, 7);
+                lcd.setCursor(10, 1);
+                lcd.print("m");
+                break;
+            }
+            break;
+
+          case 1: //Case one checks whether the three critical flags are the same between the ground station and the payload
+            if ((buf[1] == masterEnableFlag) && (buf[2] == finOverrideFlag) && (buf[3] == servoPowerFlag))
+              lcd.print("Flags all good!");
+            else {
+              lcd.print("COMM ERR:");
+              if (buf[1] != masterEnableFlag) {
+                lcd.setCursor(12, 0);
+                lcd.print("1:X");
+              }
+              if (buf[2] != finOverrideFlag) {
+                lcd.setCursor(3, 1);
+                lcd.print("2:X");
+              }
+              if (buf[1] != servoPowerFlag) {
+                lcd.setCursor(12, 1);
+                lcd.print("3:X");
+              }
+            }
+            break;
+          case 2: //Case 2 displays the flight state
             switch (flightState) {
               case 0:
                 lcd.print("Waiting");
                 break;
               case 1:
                 lcd.print("Launched");
+                break;
+              case 2:
+                lcd.print("Coasting");
                 break;
               case 3:
                 lcd.print("Falling");
@@ -298,28 +394,32 @@ void loop()
                 lcd.print("Landed");
                 break;
             }
-          }
-        }
-
-        else if (buttonState == 0 || buttonState == 4){ //If none of the other conditions are met, altitude data is transmitted
-          float altitude;
-          for (int c = 0; c < 4; c++) {
-            u.tempBuff[c] = buf[c + 8];
-          }
-          altitude = u.tempFloat;
-          lcd.print("Altitude: ");
-          lcd.setCursor(0, 1);
-          lcd.print(altitude, 7);
-          lcd.setCursor(10, 1);
-          lcd.print("m");
+            break;
+          case 3: //Case 3 displays GPS altitude data if the GPS is enabled
+            if (buf[5] == true) {
+              if (gpsFix == 0 || gpsQuality == 0) {
+                lcd.print("No GPS fix.");
+              }
+              else {
+                lcd.print("GPS Altitude:");
+                lcd.setCursor(0, 1);
+                lcd.print(altitude, 7);
+                lcd.setCursor(10, 1);
+                lcd.print("m");
+              }
+            }
+            else {
+              lcd.print("No GPS data.");
+            }
+            break;
         }
       }
-
-      
-      else
+      else //If the data-retrieval statement returns FALSE, the packet is bad
         lcd.print("ERR: Bad Packet");
 
-    }
-  }
-}
+    } //End of if(data received) section
+  } //End of primary 'else' section (i.e. if we're not sending data)
+
+
+}//End of void loop
 
