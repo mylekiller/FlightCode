@@ -1,26 +1,22 @@
 /*
-   Notre Dame Rocket Team Roll Control Payload Ground Station Code V. 1.1.4
-   Aidan McDonald, 2/12/17
+   Notre Dame Rocket Team Roll Control Payload Ground Station Code V. 1.2.0
+   Aidan McDonald, 2/13/17
    Kyle Miller, 2/8/17
 
    Most recent changes:
-   Display-shifting code overhauled- previous configuration printed certain data subsets
-   regardless of whether that data was part of the incoming packet. Current version receives data,
-   then once the packet has been processed runs a switch-case based on the button input to
-   determine what to print to the LCD. (Added several new display modes as well- flag-confirmation, sd-check)
-   Also slightly modified the button code to prevent multi-incrementing for each time the button is pushed
-   Added code to control several LEDs- whether the fin override is in place, whether the servo has power,
-   whether communications are working, and three which indicate the fin position
+   Ran comprehensive tests on code architecture and made necessary adjustments. Mostly
+   communications-based, as well as a bit of packet structure tweaking and necessary
+   pinout adjustments (avoid using 8, 4, or 3 for any external devices...)
 
    To-dones:
    Basic radio transmit-receive architecture in place
-   Reconfigured packet processing code to properly match the current flight code (v. 1.1.3)
+   Reconfigured packet processing code to properly match the current flight code (v. 1.2.0)
    Added error messages for every current failure mode
    All data now goes to an LCD! (Wiring correctness TBD)
+   Tested for coherence, clarity, function
 
    To-dos:
-   Figure out what other buttons and switches we have (if any) and what they need to do
-
+   SET I/O PINS TO PROPER VALUES!!!!!!!
 */
 
 #include <SPI.h>
@@ -29,7 +25,7 @@
 
 #define RFM95_CS 8
 #define RFM95_RST 4
-#define RFM95_INT 3
+#define RFM95_INT 3 //Assign nothing else to these digital pins!!!
 
 //Must match RX's freq!
 #define RF95_FREQ 915.0
@@ -38,15 +34,15 @@
 RH_RF95 rf95(RFM95_CS, RFM95_INT);
 
 //Instance of the LCD- for wiring see below.
-LiquidCrystal lcd(12, 11, 5, 4, 3, 2);
+LiquidCrystal lcd(13, 12, 11, 10, 9, 6);
 /*
   The circuit:
-  LCD RS pin to digital pin 12
-  LCD Enable pin to digital pin 11
-  LCD D4 pin to digital pin 5
-  LCD D5 pin to digital pin 4
-  LCD D6 pin to digital pin 3
-  LCD D7 pin to digital pin 2
+  LCD RS pin to digital pin 13
+  LCD Enable pin to digital pin 12
+  LCD D4 pin to digital pin 11
+  LCD D5 pin to digital pin 10
+  LCD D6 pin to digital pin 9
+  LCD D7 pin to digital pin 6
   LCD R/W pin to ground
   LCD VSS pin to ground
   LCD VCC pin to 5V
@@ -75,12 +71,12 @@ int flightState;
 const int masterEnablePin = 0;
 const int finOverridePin = 1;
 const int servoPowerPin = 2; //Digital inputs for important flags- CHANGE THESE TO FIT REAL WORLD!!
-const int buttonPin = 3;//Input to toggle display modes
-const int packetLED = 4; //Output pins for display LEDs
+const int buttonPin = 10;//Input to toggle display modes
+const int packetLED = 11; //Output pins for display LEDs
 const int finOverLED = 5;
 const int finLLED = 6;
 const int finRLED = 7;
-const int finCLED = 8;
+const int finCLED = 12;
 const int finOnLED = 9;
 
 int packetTimeDelay = 5000; //Number of milliseconds the comms LED stays on for between valid packets
@@ -167,8 +163,8 @@ void loop()
 
   if (sendFlag) { //Transmit select commands to the payload
 
-    uint8_t data[8];
-
+    uint8_t data[9];
+delay(100); //For timing purposes
     //Send everything in triplicate, for verification/reliability/data clarity purposes.
     data[0] = digitalRead(masterEnablePin);
     data[1] = digitalRead(masterEnablePin); //Enables data processing
@@ -179,6 +175,7 @@ void loop()
     data[6] = digitalRead(servoPowerPin);
     data[7] = digitalRead(servoPowerPin); //Controls servo power
     data[8] = digitalRead(servoPowerPin);
+    data[9] = 0; //Necessary end tag
 
     if (data[1])
       masterEnableFlag = true;
@@ -187,7 +184,7 @@ void loop()
     if (data[7])
       servoPowerFlag = true; //This allows us to compare what we've sent and what the payload does
 
-    rf95.send(data, 8);
+    rf95.send(data, 9);
     rf95.waitPacketSent();
 
     sendFlag = false;
@@ -215,7 +212,7 @@ void loop()
           If the flag is false, the next/last piece of data is the number of
           completed revolutions (4), leading to a total length of 12.
           If the flag is true, the next/last piece of data is rotational velocity
-          on the z-axis (2), leading to a total length of 10.
+          on the z-axis (4), leading to a total length of 12.
 
         Finally, if no other conditions apply, the rest of the packet is altitude data
         (4), leading to a total length of 11.
@@ -245,7 +242,7 @@ void loop()
       int gpsFix;
       int gpsQuality;
       float completedRevs;
-      int rotationVel;
+      float rotationVel;
 
 
       if (rf95.recv(buf, &len)) //Fills 'buf' with data, returns false if an error occurs
@@ -265,7 +262,7 @@ void loop()
           dataCase = error;
         }
 
-        else if (buf[1] == 0) { //buf[1] is the sensor "sleep mode" flag
+        else if (buf[1] == 0 || flightState == waiting) { //buf[1] is the sensor "sleep mode" flag
           for (int c = 0; c < 4; c++) {
             u.tempBuff[c] = buf[c + 8];
           }
@@ -309,19 +306,15 @@ void loop()
           }
           else if (buf[8] == 1) { //If the flag is true, rotational velocity is tracked
             dataCase = burnoutB;
-
-            union { //Since we're receiving an integer, we need a different-sized memory union to work with
-              int tempInt;
-              byte tempArray[1];
-            } uInt;
-            uInt.tempArray[0] = buf[9];
-            uInt.tempArray[1] = buf[10];
-            rotationVel = uInt.tempInt;
+            
+            for (int c = 0; c < 4; c++) {
+              u.tempBuff[c] = buf[c + 9];
+            }
+            rotationVel = u.tempFloat;
           }
         }
 
         else { //If none of the other conditions are met, altitude data is transmitted
-          float altitude;
           dataCase = baro;
           for (int c = 0; c < 4; c++) {
             u.tempBuff[c] = buf[c + 8];
@@ -344,7 +337,7 @@ void loop()
                 lcd.print("%");
                 break;
               case gps:
-                if (gpsFix == 0 || gpsQuality == 0) {
+                if (gpsFix == 0) {
                   lcd.print("No GPS Fix...");
                 }
                 else {
@@ -365,8 +358,8 @@ void loop()
               case burnoutB:
                 lcd.print("Rotation Speed:");
                 lcd.setCursor(0, 1);
-                lcd.print(rotationVel);
-                lcd.setCursor(6, 1);
+                lcd.print(rotationVel, 5);
+                lcd.setCursor(9, 1);
                 lcd.print("rad/s");
                 break;
               case baro:

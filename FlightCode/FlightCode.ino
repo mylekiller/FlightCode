@@ -1,11 +1,11 @@
 /*
-   Notre Dame Rocket Team Roll Control Payload Master Code V. 1.1.2
-   Aidan McDonald, 2/12/17
+   Notre Dame Rocket Team Roll Control Payload Master Code V. 1.2.0
+   Aidan McDonald, 2/13/17
    Kyle Miller, 2/2/17
 
    Most recent changes:
-   Minor changes to the fin-canting logic: corrected a few typos; reconfigured the
-   code to take note that, for both the gyro and servo, positive values are counterclockwise.
+   Fixed radio transmission timing, rotation calculation, data saving/processing, flight staging,
+   and multiple other small errors which would otherwise cripple the payload.
 
 
    To-dones:
@@ -19,14 +19,10 @@
     Github Sync system working
     Packet transmission/reception over radio
     Roll control subroutine reconfigured for new servo mode
+    Testing of primary code functions (SD saving, data processing, roll control)
 
-   To-dos:
-    Revise and enhance the staging/thresholds, particularly burnout/apogee accel values
-    Reconfigure the SD datalogging section to allow for easy spreadsheet conversion
-    Test List:
-      Servo Control
-      Flight Staging
-      Etc., etc.
+    To-dos:
+    SET I/O PINS TO PROPER VALUES!!!!!!!
 
 */
 
@@ -60,27 +56,26 @@ Adafruit_GPS GPS(&GPSSerial); //Construct instance of the GPS object
 const int cardSelectPin = 10; //Note: for some incredibly stupid reason, you must initialize on pin 8 first for proper functionality
 const int stupidSDPin = 8;
 File dataLog; //File to log flight data
-int accelData[3];
-int gyroData[3];
+float accelData[3];
+float gyroData[3];
 float baroData[3]; //Char buffers for storing sensor data
 unsigned long timeData[2];
 
-int accelZBuffer[5] = {0, 0, 0, 0, 0};
+float accelZBuffer[5] = {0, 0, 0, 0, 0};
 float baroAltBuffer[5] = {0, 0, 0, 0, 0};
-int gyroZBuffer[7] = {0, 0, 0, 0, 0, 0, 0}; //The other values are arbitrary; this one is used in Simpsons Rule, so it MUST BE ODD!
-unsigned long timeBuffer[7] = {0, 0, 0, 0, 0, 0, 0}; //Must equal the size of gyroZBuffer; used for the same calculations.
+float gyroZBuffer[7] = {0, 0, 0, 0, 0, 0, 0}; //The other values are arbitrary; this one is used in Simpsons Rule, so it MUST BE ODD!
+float timeBuffer[7] = {0, 0, 0, 0, 0, 0, 0}; //Must equal the size of gyroZBuffer; used for the same calculations.
 
-byte accelAverage;
-byte baroAverage;
-unsigned long timeStepAverage; //Averages of the above buffer values
+float accelAverage;
+float baroAverage; //Averages of the above buffer values
 
 float gpsLatitude = 0;
 float gpsLongitude = 0;
 float gpsAltitude = -1;
 char gpsLatDirect = 'A';
 char gpsLonDirect = 'B';
-int gpsFix = -1;
-int gpsFixQuality = -1; //Variables to store GPS data between the SD and radio functions
+int gpsFix = 0;
+int gpsFixQuality = 0; //Variables to store GPS data between the SD and radio functions
 
 //Constants/values for sensor calibration
 const float seaLevelPressure = SENSORS_PRESSURE_SEALEVELHPA; //Default value of 1013.25 hPa, needs calibration!
@@ -114,14 +109,17 @@ int flightState; //Variable for switch case
 const int LIFTOFF_ACCEL_THRESHOLD = 38;
 const int BURNOUT_ACCEL_THRESHOLD = 12; //Constants for flight staging calculation
 const int BURNOUT_BARO_THRESHOLD = 610; //Accel values are in m/s^2, baro values are in m, and time is in milliseconds
-const int BURNOUT_TIME_THRESHOLD = 6000;
+const int BURNOUT_TIME_THRESHOLD = 5500;
 const int APOGEE_ACCEL_THRESHOLD = 23;
 const int APOGEE_TIME_THRESHOLD = 20000;
-const int LANDED_BARO_THRESHOLD = 6;
-const int MIN_ROLL_THRESHOLD = 0;
+const int LANDED_BARO_THRESHOLD = 10;
+const int MIN_ROLL_THRESHOLD = 0.05;
+
+const float GYRO_DRIFT_FACTOR = 0.006; //Factors for use in calculating completed rotations properly
+const float SIMPSON_SCALE_FACTOR = 1.51;
 
 const int GPS_BARO_THRESHOLD = 200; //600 feet/200m is when the recovery system deploys
-const int MAX_PACKET_SIZE = 23; //The one and only constant you will ever need to update for packet-related reasons
+const int MAX_PACKET_SIZE = 24; //The one and only constant you will ever need to update for packet-related reasons
 
 bool startRollFlag = false;
 bool endRollFlag = false; //Flags for tracking roll/counter-roll progress
@@ -130,14 +128,13 @@ float rotationCounter = 0; //Variable for tracking rotation, in revolutions
 
 bool sendFlag = true; //Flag for toggling send/receive mode; makes 2-way communication much easier
 bool radioWorkingFlag = true; //Flag to determine if radio initialized properly. If not, then it continues on without comms
-bool dataFlag = false; //Since SD saving and radio transmission occur in two different functions, the SD routine uses this flag to tell the radio routine if data is ready for transmission
 bool gpsOnFlag = false; //Flag to determine whether GPS is currently operating/enabled
 bool sdWorkingFlag = true; //Flag to note if SD initializes properly, since that has been a problem in the past.
 
 bool masterEnableFlag = false; //Flag that puts the Arduino in/out of "sleep mode."
 bool finOverrideFlag = false; //Flag that acts as a "big red button" to stop the arduino's roll-control.
 
-const int timeDelay = 333; //In milliseconds
+const int timeDelay = 600; //In milliseconds
 unsigned long rxTime = 0; //Variables for the radio transmitter double-pulse backup code
 
 
@@ -155,6 +152,10 @@ void setup() {
   bmp.begin();
   gyro.enableAutoRange(true);
   gyro.begin();//Initialize the sensors
+
+          GPS.begin(9600); //Initialize GPS; define output set and data rate
+        GPS.sendCommand(PMTK_SET_NMEA_OUTPUT_RMCGGA);
+        GPS.sendCommand(PMTK_SET_NMEA_UPDATE_1HZ);
 
   SD.begin(stupidSDPin);
   if (!SD.begin(cardSelectPin)) //Initialize the SD card; set a flag if the initialization fails
@@ -186,6 +187,10 @@ void setup() {
 
 
   flightState = waiting; //Initialize switch variable
+
+   dataLog = SD.open("datalog.txt", FILE_WRITE);
+   dataLog.print("Total time,Flight time,Accel X,Accel Y,Accel Z,Gyro X,Gyro Y,Gyro Z,Baro Press,Baro Temp,Baro Alt,Latitude,Lat Heading,Longitude,Long Heading,GPS Alt,GPS Fix,Fix Quality,Battery %");
+   dataLog.close(); //Write the datalog header to the SD card (used for spreadsheet conversion)
 }
 
 
@@ -200,9 +205,6 @@ void loop() {
     Record_Data(mainEvent);//Save sensor data (accel, baro, time, GPS) to the SD card
     BufferUpdate();
   }
-
-  if (gpsOnFlag)
-    char c = GPS.read(); //Must call GPS.read() at some point for data transmission to occur
 
   if (startTime != 0)
     flightTime = millis() - startTime; //Variable tracking post-launch time for backup flight staging
@@ -228,7 +230,7 @@ void loop() {
 
 
     case launched:
-      if ((abs(accelAverage) < BURNOUT_ACCEL_THRESHOLD) || (baroAverage > BURNOUT_BARO_THRESHOLD) || (flightTime > BURNOUT_TIME_THRESHOLD))
+      if ((accelAverage < BURNOUT_ACCEL_THRESHOLD) || (baroAverage > BURNOUT_BARO_THRESHOLD) || (flightTime > BURNOUT_TIME_THRESHOLD))
       {
         flightState = burnout;
       }
@@ -239,7 +241,7 @@ void loop() {
 
       Roll_Control(mainEvent);
 
-      if ((accelAverage > APOGEE_ACCEL_THRESHOLD) || (flightTime > APOGEE_TIME_THRESHOLD)) //Add a baro test here?
+      if (flightTime > APOGEE_TIME_THRESHOLD) //Add a baro test here?
       {
         flightState = falling;
       }
@@ -254,9 +256,6 @@ void loop() {
 
       if (baroAverage < GPS_BARO_THRESHOLD) //Enable GPS if we're low enough
       {
-        GPS.begin(9600); //Initialize GPS; define output set and data rate
-        GPS.sendCommand(PMTK_SET_NMEA_OUTPUT_RMCGGA);
-        GPS.sendCommand(PMTK_SET_NMEA_UPDATE_1HZ);
         gpsOnFlag = true;
       }
 
@@ -281,7 +280,7 @@ void Roll_Control(sensors_event_t event) {
   }
   else if (!endRollFlag) { //Wait until two revolutions have ben completed to begin counter-roll
 
-    if (rotationCounter > 2) {
+    if (fabs(rotationCounter) > 2) {
       Set_Servo(finPosition, abs(finPosition - 2)); //This will output LEFT if finPosition = RIGHT, and vice-versa
       endRollFlag = true;
     }
@@ -329,17 +328,16 @@ void Set_Servo(int current, int goal) { //Subroutine which takes current positio
 
 
 void Record_Data(sensors_event_t event) { //Subroutine for saving sensor data to the SD card
-
   //Fill data buffers with sensor readings
-  gyro.getEvent(&event);
-  gyroData[0] = event.gyro.x;
-  gyroData[1] = event.gyro.y;
-  gyroData[2] = event.gyro.z;
-
   accel.getEvent(&event);
   accelData[0] = event.acceleration.x;
   accelData[1] = event.acceleration.y;
   accelData[2] = event.acceleration.z;
+  
+  gyro.getEvent(&event);
+  gyroData[0] = event.gyro.x;
+  gyroData[1] = event.gyro.y;
+  gyroData[2] = event.gyro.z;
 
   bmp.getEvent(&event);
   float temperature;
@@ -352,66 +350,73 @@ void Record_Data(sensors_event_t event) { //Subroutine for saving sensor data to
   batteryLevel *= 0.1534598214;  //Read the battery level and convert to a percentage
 
   timeData[0] = millis();
-  timeData[1] = millis() - startTime;
+  timeData[1] = flightTime;
 
-  if (!gpsOnFlag) {
-    dataFlag = true; //If the GPS isn't on yet, set the dataFlag to true automatically
-  }
-
-
-  if (GPS.newNMEAreceived() && gpsOnFlag) { //Update GPS data if an update is available
+if (gpsOnFlag) {
+    char c = GPS.read(); //Must call GPS.read() at some point for data transmission to occur
+  if (GPS.newNMEAreceived()) { //Update GPS data if an update is available
     if (!GPS.parse(GPS.lastNMEA())) // this sets the newNMEAreceived() flag to false; prevents double(+)-update loop
       return;
-    dataFlag = true; //Set flag to tell radio new data is ready
+  }
     gpsLatitude = GPS.latitude;
     gpsLongitude = GPS.longitude;
     gpsAltitude = GPS.altitude;
     gpsLatDirect = GPS.lat;
     gpsLonDirect = GPS.lon;
+    if(gpsLatitude != 0)
+    gpsFix = 1;
+    else
     gpsFix = GPS.fix;
     gpsFixQuality = GPS.fixquality;
-  }
+
+}
+ 
 
   if (sdWorkingFlag) { //Only actually work with the SD card if the SD card is working
-    dataLog = SD.open("flight_data.txt", FILE_WRITE); //Open the file flight_data.txt in write mode
+    dataLog = SD.open("datalog.txt", FILE_WRITE); //Open the file datalog.txt in write mode
 
     if (dataLog) { //log data only if the file opened properly
-      dataLog.println(); //Start a new line
+      dataLog.println(""); //Start a new line
 
-      for (int c = 0; c < 1; c++) {
+      for (int c = 0; c < 2; c++) {
         dataLog.print(timeData[c]);
-        dataLog.print(", "); //Separate data entries by a comma and a space
+        dataLog.print(","); //Separate data entries by a comma
       }
 
-      for (int c = 0; c < 2; c++) {
+      for (int c = 0; c < 3; c++) {
         dataLog.print(accelData[c]);
-        dataLog.print(", ");
+        dataLog.print(",");
       }
 
-      for (int c = 0; c < 2; c++) {
+      for (int c = 0; c < 3; c++) {
         dataLog.print(gyroData[c]);
-        dataLog.print(", ");
+        dataLog.print(",");
       }
 
-      for (int c = 0; c < 2; c++) {
+      for (int c = 0; c < 3; c++) {
         dataLog.print(baroData[c]);
-        dataLog.print(", ");
+        dataLog.print(",");
       }
 
       dataLog.print(gpsLatitude);
+      dataLog.print(",");
       dataLog.print(gpsLatDirect);
-      dataLog.print(", ");
+      dataLog.print(",");
       dataLog.print(gpsLongitude);
+      dataLog.print(",");
       dataLog.print(gpsLonDirect);
-      dataLog.print(", ");
+      dataLog.print(",");
       dataLog.print(gpsAltitude);
-      dataLog.print(", ");
+      dataLog.print(",");
       dataLog.print(gpsFix);
-      dataLog.print(", ");
+      dataLog.print(",");
       dataLog.print(gpsFixQuality);
+      dataLog.print(",");
+      dataLog.print(batteryLevel);
 
       dataLog.close(); //Close the file
-    }
+      delay(40); //Necessary decrease in baud rate to prevent program from crashing when trying to access the SD card (memory overflow?)
+    } //Any value lower than 40 ms runs a serious risk of rapid program freeze
 
   }
 
@@ -421,9 +426,8 @@ void Record_Data(sensors_event_t event) { //Subroutine for saving sensor data to
 
 void Radio_Transmit(void) {
 
-  if (dataFlag && sendFlag) //Send data mode, only if GPS is ready
+  if (sendFlag) //Send data mode, only if GPS is ready
   {
-    dataFlag = false; //Only turn off this flag if Arduino is actively sending data
     sendFlag = false; //Once we send data, wait for data to be received
 
     uint8_t radioPacket[MAX_PACKET_SIZE]; //Buffer of bytes for radio transmission
@@ -452,7 +456,7 @@ void Radio_Transmit(void) {
       byte tempArray[3];
     } u;
 
-    if (!masterEnableFlag) {
+    if (!masterEnableFlag || flightState == waiting) {
       //If sensors aren't enabled yet, send battery data
       u.tempFloat = batteryLevel;
       for (int c = 0; c < 4; c++) {
@@ -488,22 +492,17 @@ void Radio_Transmit(void) {
       radioPacket[packAddr] = gpsFixQuality; //Useful for determining valid/invalid GPS data; if fix or quality are 0 the data isn't reliable
     }
 
-    else if (flightState = burnout) {
+    else if (flightState == burnout) {
 
       packAddr++;
       radioPacket[packAddr] = endRollFlag; //If we're in burnout, send the "end roll flag." It determines whether we send the running tally (float) or the current rotation speed (int)
 
       if (endRollFlag) {
-        union { //Since we're sending an integer, we need a different-sized memory union to work with
-          int tempInt;
-          byte tempArray[1];
-        } uInt;
-
-        uInt.tempInt = gyroData[2];
-        packAddr++;
-        radioPacket[packAddr] = uInt.tempArray[0];
-        packAddr++;
-        radioPacket[packAddr] = uInt.tempArray[1];
+        u.tempFloat = gyroData[2];
+         for (int c = 0; c < 4; c++) {
+          packAddr++;
+          radioPacket[packAddr] = u.tempArray[c];
+        }
       }
 
       else {
@@ -517,13 +516,14 @@ void Radio_Transmit(void) {
     }
 
     else { //If we're not in the burnout phase and haven't turned on the GPS, then send current altitude
-      u.tempFloat = baroData[2];
+      u.tempFloat = (baroData[2] - startAlt);
       for (int c = 0; c < 4; c++) {
         packAddr++;
         radioPacket[packAddr] = u.tempArray[c];
       }
     }
-
+    packAddr++;
+    radioPacket[packAddr] = 0; //Packets must end with a zero!!
     packetSize = packAddr; //Update the packet size to match the most recently used address
 
     rf95.send((uint8_t *)radioPacket, packetSize); //Once packet has been constructed, transmit
@@ -549,8 +549,6 @@ void Radio_Transmit(void) {
 
         if (buf[0] || buf[1] || buf[2])
           masterEnableFlag = true;
-        else
-          masterEnableFlag = false;
 
         if (buf[3] || buf[4] || buf[5])
           finOverrideFlag = true;
@@ -564,9 +562,9 @@ void Radio_Transmit(void) {
 
       }
     }
-
-    else if ((millis() - rxTime) > timeDelay)
+    else if ((millis() - rxTime) > timeDelay) {
       sendFlag = true;
+    }
 
   }
 }
@@ -598,26 +596,26 @@ void BufferUpdate() { //Function to keep a running buffer of select sensor value
        This section functions stepwise. Once the two buffers are full, the algorithm performs numerical
        integration, increments rollCounter, and flushes the buffers before starting over.
     */
-    if (timeBuffer[6] < 1) { //If the buffers are not yet full; avoiding == 0 because it's an unsigned long
+    if (timeBuffer[6] < 1) { //If the buffers are not yet full; avoiding == 0 because it's a floating point
 
       for (int c = 0; c < 6; c++) {
         timeBuffer[6 - c] = timeBuffer[5 - c];
         gyroZBuffer[6 - c] = gyroZBuffer[5 - c];
       }
       timeBuffer[0] = millis();
-      gyroZBuffer[0] = gyroData[2]; //Again, this buffer should be up-to-date
+      gyroZBuffer[0] = gyroData[2] - GYRO_DRIFT_FACTOR; //Again, this buffer should be up-to-date
 
     }
 
     else { //Once the buffers are full, perform the integration!
 
-      float deltaT = (timeBuffer[6] - timeBuffer[0]) / 18; //Note: the average is technically /6, but since Simpson's Rule adds a /3 anyways, it's just more efficient to combine them
+      float deltaT = (timeBuffer[0] - timeBuffer[6]) / 18; //Note: the average is technically /6, but since Simpson's Rule adds a /3 anyways, it's just more efficient to combine them
       float simpsonSum = gyroZBuffer[0] + gyroZBuffer[6];
       simpsonSum = simpsonSum + 4 * (gyroZBuffer[1] + gyroZBuffer[3] + gyroZBuffer[5]);
       simpsonSum = simpsonSum + 2 * (gyroZBuffer[2] + gyroZBuffer[4]);
-      simpsonSum = simpsonSum * deltaT; //Hooray for numerical integration! Should look into whether there's a more efficient way to perform Simpson's rule here.
+      simpsonSum = simpsonSum * deltaT/1000; //Hooray for numerical integration! Should look into whether there's a more efficient way to perform Simpson's rule here.
 
-      rotationCounter = rotationCounter + (simpsonSum / 6.28318531); //Convert from radians to revolutions and increment the counter!
+      rotationCounter = rotationCounter + (simpsonSum / 6.28318531)*SIMPSON_SCALE_FACTOR; //Convert from radians to revolutions and increment the counter!
 
       for (int c = 0; c < 7; c++) {
         timeBuffer[c] = 0;
