@@ -1,11 +1,10 @@
 /*
-   Notre Dame Rocket Team Roll Control Payload Master Code V. 1.2.0
+   Notre Dame Rocket Team Roll Control Payload Master Code V. 1.2.1
    Aidan McDonald, 2/13/17
    Kyle Miller, 2/2/17
 
    Most recent changes:
-   Fixed radio transmission timing, rotation calculation, data saving/processing, flight staging,
-   and multiple other small errors which would otherwise cripple the payload.
+   I/O pins set to proper values!!! (Flight-test ready!!!!)
 
 
    To-dones:
@@ -20,9 +19,6 @@
     Packet transmission/reception over radio
     Roll control subroutine reconfigured for new servo mode
     Testing of primary code functions (SD saving, data processing, roll control)
-
-    To-dos:
-    SET I/O PINS TO PROPER VALUES!!!!!!!
 
 */
 
@@ -84,16 +80,16 @@ long startTime = 0; //variable to note flight time
 long flightTime = 0;
 
 //Constants for servo pin output
-const int controlPin = 0; //"control" is the pin which is pulsed to trigger the servo to move
-const int statePinA = 1; //The state of pins A and B determines which of four motions the servo takes when the control pin is pulsed.
-const int statePinB = 2; // If B is low, move 1 position, if B is high, move two positions. High A is negative (counterclockwise?), low A is positive (clockwise?)
+const int controlPin = 10; //"control" is the pin which is pulsed to trigger the servo to move
+const int statePinA = 11; //The state of pins A and B determines which of four motions the servo takes when the control pin is pulsed.
+const int statePinB = 12; // If B is low, move 1 position, if B is high, move two positions. High A is negative (counterclockwise?), low A is positive (clockwise?)
 const int RIGHT = 0;
 const int CENTER = 1;
 const int LEFT = 2;
 int finPosition = CENTER; //Since the servo moves based on increments and not absolute positions, these constants and variable are needed to track the fins' position.
 
 bool servoPowerFlag = false;
-const int servoPowerPin = 3; //Flag and pin to power on/off the servo with a transistor
+const int servoPowerPin = 6; //Flag and pin to power on/off the servo with a transistor
 
 const int batteryPin = 9; //Built-in power tracking pin
 float batteryLevel = 100; //Battery power, in percentage
@@ -147,6 +143,8 @@ void setup() {
   pinMode(statePinB, OUTPUT);
   pinMode(servoPowerPin, OUTPUT);
   pinMode(batteryPin, INPUT);
+
+  pinMode(13, OUTPUT);
 
   accel.begin();
   bmp.begin();
@@ -415,7 +413,7 @@ if (gpsOnFlag) {
       dataLog.print(batteryLevel);
 
       dataLog.close(); //Close the file
-      delay(40); //Necessary decrease in baud rate to prevent program from crashing when trying to access the SD card (memory overflow?)
+      delay(50); //Necessary decrease in baud rate to prevent program from crashing when trying to access the SD card (memory overflow?)
     } //Any value lower than 40 ms runs a serious risk of rapid program freeze
 
   }
@@ -429,6 +427,8 @@ void Radio_Transmit(void) {
   if (sendFlag) //Send data mode, only if GPS is ready
   {
     sendFlag = false; //Once we send data, wait for data to be received
+
+    digitalWrite(13, HIGH);
 
     uint8_t radioPacket[MAX_PACKET_SIZE]; //Buffer of bytes for radio transmission
     int packetSize; //Depending on the flight state, the actual packet size may change
@@ -529,6 +529,7 @@ void Radio_Transmit(void) {
     rf95.send((uint8_t *)radioPacket, packetSize); //Once packet has been constructed, transmit
     rf95.waitPacketSent(); //Short, necessary wait for packet transmission to complete
 
+    digitalWrite(13, LOW);
     rxTime = millis(); //Note the most recent packet-sent time
   }
 
@@ -536,6 +537,7 @@ void Radio_Transmit(void) {
 
     if (rf95.available())
     {
+    digitalWrite(13, HIGH);
       sendFlag = true; //If data is received, return to data-send mode
       uint8_t buf[RH_RF95_MAX_MESSAGE_LEN];
       uint8_t len = sizeof(buf); //Variables to contain received message
@@ -558,6 +560,7 @@ void Radio_Transmit(void) {
         if (buf[6] || buf[7] || buf[8]) {
           servoPowerFlag = true;
           digitalWrite(servoPowerPin, servoPowerFlag);
+              digitalWrite(13, LOW);
         }
 
       }

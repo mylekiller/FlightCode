@@ -110,6 +110,8 @@ void setup()
   pinMode(finRLED, OUTPUT);
   pinMode(finOnLED, OUTPUT);
 
+  pinMode(13, OUTPUT);
+  
   // manual radio reset
   digitalWrite(RFM95_RST, LOW);
   delay(10);
@@ -165,6 +167,7 @@ void loop()
 
     uint8_t data[9];
 delay(100); //For timing purposes
+    digitalWrite(13, HIGH);
     //Send everything in triplicate, for verification/reliability/data clarity purposes.
     data[0] = digitalRead(masterEnablePin);
     data[1] = digitalRead(masterEnablePin); //Enables data processing
@@ -187,6 +190,7 @@ delay(100); //For timing purposes
     rf95.send(data, 9);
     rf95.waitPacketSent();
 
+    digitalWrite(13, LOW);
     sendFlag = false;
   }
 
@@ -220,6 +224,7 @@ delay(100); //For timing purposes
 
     if (rf95.available())
     {
+     digitalWrite(13, HIGH);
       sendFlag = true;
       lcd.clear(); //Clear the LCD since new data is incoming
       lcd.setCursor(15, 1);
@@ -474,6 +479,7 @@ delay(100); //For timing purposes
       else //If the data-retrieval statement returns FALSE, the packet is bad
         lcd.print("ERR: Bad Packet");
 
+    digitalWrite(13, LOW);
     } //End of if(data received) section
   } //End of primary 'else' section (i.e. if we're not sending data)
 
