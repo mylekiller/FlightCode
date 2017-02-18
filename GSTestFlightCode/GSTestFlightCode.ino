@@ -1,6 +1,6 @@
 /*
    Notre Dame Rocket Team Roll Control Payload Ground Station Code V. 1.2.0
-   Aidan McDonald, 2/13/17
+   Aidan McDonald, 2/17/17
    Kyle Miller, 2/8/17
 
    Most recent changes:
@@ -21,7 +21,7 @@
 
 #include <SPI.h>
 #include <RH_RF95.h>
-#include <LiquidCrystal.h>
+//#include <LiquidCrystal.h>
 
 #define RFM95_CS 8
 #define RFM95_RST 4
@@ -34,7 +34,7 @@
 RH_RF95 rf95(RFM95_CS, RFM95_INT);
 
 //Instance of the LCD- for wiring see below.
-LiquidCrystal lcd(13, 12, 11, 10, 9, 6);
+//LiquidCrystal lcd(13, 12, 11, 10, 9, 6);
 /*
   The circuit:
   LCD RS pin to digital pin 13
@@ -70,14 +70,13 @@ int flightState;
 //I/O pins
 const int masterEnablePin = A0;
 const int finOverridePin = A1;
-//const int servoPowerPin = A2; //Digital inputs for important flags
 const int buttonPin = A3;//Input to toggle display modes
 const int packetLED = A2; //Output pins for display LEDs
 const int mysteryLED = A5;
 const int finLLED = 5;
 const int finRLED = 20;
 const int finCLED = 21;
-//const int finOnLED = A2;
+
 
 int packetTimeDelay = 5000; //Number of milliseconds the comms LED stays on for between valid packets
 float lastRxTime = 0;
@@ -96,19 +95,17 @@ const int baro = 5;
 
 void setup()
 {
+  
   pinMode(masterEnablePin, INPUT);
   pinMode(finOverridePin, INPUT);
-  //pinMode(servoPowerPin, INPUT);
   pinMode(buttonPin, INPUT);
   pinMode(RFM95_RST, OUTPUT);
   digitalWrite(RFM95_RST, HIGH);
 
   pinMode(packetLED, OUTPUT);
-  //pinMode(finOverLED, OUTPUT);
   pinMode(finLLED, OUTPUT);
   pinMode(finCLED, OUTPUT);
   pinMode(finRLED, OUTPUT);
-  //pinMode(finOnLED, OUTPUT);
 
   pinMode(13, OUTPUT);
   
@@ -119,7 +116,8 @@ void setup()
   delay(10);
 
   // set up the LCD's number of columns and rows:
-  lcd.begin(16, 2);
+  Serial.begin(9600);
+  while(!Serial);
 
   if (!rf95.init()) //Initialize the radio, set frequency, and set power level to max
     radioWorkingFlag = false;
@@ -128,9 +126,9 @@ void setup()
   rf95.setTxPower(23, false);
 
   if (!radioWorkingFlag) { //If radio setup fails, display a message and wait-
-    lcd.print("ERR: Radio Init"); //Without radio, the ground station is useless.
-    lcd.setCursor(0, 1);
-    lcd.print("Failure. Reset?");
+    Serial.print("ERR: Radio Init"); //Without radio, the ground station is useless.
+    //lcd.setCursor(0, 1);
+    Serial.println(" Failure. Reset?");
     while (1);
   }
 
@@ -153,9 +151,9 @@ void loop()
       if (buttonState == 5) {
         buttonState = 0;
       }
-      lcd.setCursor(15, 1);
-      lcd.print(buttonState);  //Update the button state on the LCD
-      lcd.setCursor(0, 0); //Return cursor to the origin
+      //lcd.setCursor(15, 1);
+      //Serial.print(buttonState);  //Update the button state on the LCD
+      //lcd.setCursor(0, 0); //Return cursor to the origin
     }
   }
   else {
@@ -169,23 +167,21 @@ void loop()
 delay(100); //For timing purposes
     digitalWrite(13, HIGH);
     //Send everything in triplicate, for verification/reliability/data clarity purposes.
-    data[0] = digitalRead(masterEnablePin);
-    data[1] = digitalRead(masterEnablePin); //Enables data processing
-    data[2] = digitalRead(masterEnablePin);
-    data[3] = digitalRead(finOverridePin);
-    data[4] = digitalRead(finOverridePin); //Forcibly sets fins to vertical
-    data[5] = digitalRead(finOverridePin);
-    data[6] = digitalRead(masterEnablePin);
-    data[7] = digitalRead(masterEnablePin); //Enables data processing
-    data[8] = digitalRead(masterEnablePin);
+    data[0] = 1;//digitalRead(masterEnablePin);
+    data[1] = 1;//digitalRead(masterEnablePin); //Enables data processing
+    data[2] = 1;//digitalRead(masterEnablePin);
+    data[3] = 0;//digitalRead(finOverridePin);
+    data[4] = 0;//digitalRead(finOverridePin); //Forcibly sets fins to vertical
+    data[5] = 0;//digitalRead(finOverridePin);
+    data[6] = 1;//digitalRead(masterEnablePin);
+    data[7] = 1;//digitalRead(masterEnablePin); //Enables data processing
+    data[8] = 1;//digitalRead(masterEnablePin);
     data[9] = 0; //Necessary end tag
 
     if (data[1])
       masterEnableFlag = true;
     if (data[4])
       finOverrideFlag = true; //Just like in the flight code, set flags true if the three overrides are ever pressed
-   // if (data[7])
-     // servoPowerFlag = true; //This allows us to compare what we've sent and what the payload does
 
     rf95.send(data, 9);
     rf95.waitPacketSent();
@@ -224,12 +220,12 @@ delay(100); //For timing purposes
 
     if (rf95.available())
     {
-     digitalWrite(13, HIGH);
+    digitalWrite(13, HIGH);
       sendFlag = true;
-      lcd.clear(); //Clear the LCD since new data is incoming
-      lcd.setCursor(15, 1);
-      lcd.print(buttonState);  //Always print the display mode in the bottom-right corner of the screen
-      lcd.setCursor(0, 0); //Return cursor to the origin
+      //lcd.clear(); //Clear the LCD since new data is incoming
+      //lcd.setCursor(15, 1);
+      //Serial.print(buttonState);  //Always print the display mode in the bottom-right corner of the screen
+      //lcd.setCursor(0, 0); //Return cursor to the origin
 
       // Should be a message for us now
       uint8_t buf[RH_RF95_MAX_MESSAGE_LEN];
@@ -263,7 +259,7 @@ delay(100); //For timing purposes
         flightState = buf[0]; //Update the flight state tracker
 
         if (buf[4] != 42) {
-          lcd.print("ERR: Bad Header"); //42 in slot 4 is the header's backup validity check
+          Serial.println("ERR: Bad Header"); //42 in slot 4 is the header's backup validity check
           dataCase = error;
         }
 
@@ -335,127 +331,115 @@ delay(100); //For timing purposes
                 //No need to display anything else in the error case
                 break;
               case battery:
-                lcd.print("Battery Level:");
-                lcd.setCursor(0, 1);
-                lcd.print(batteryLevel, 3);
-                lcd.setCursor(8, 1);
-                lcd.print("%");
+                Serial.print("Battery Level: ");
+                //lcd.setCursor(0, 1);
+                Serial.print(batteryLevel, 3);
+                //lcd.setCursor(8, 1);
+                Serial.println(" %");
                 break;
               case gps:
                 if (gpsFix == 0) {
-                  lcd.print("No GPS Fix...");
+                  Serial.println("No GPS Fix...");
                 }
                 else {
-                  lcd.print(latitude, 7);
-                  lcd.setCursor(11, 0);
-                  lcd.print(latDirect);
-                  lcd.setCursor(0, 1);
-                  lcd.print(longitude, 7);
-                  lcd.setCursor(11, 1);
-                  lcd.print(longDirect);
+                  Serial.print(latitude, 7);
+                  //lcd.setCursor(11, 0);
+                  Serial.println(latDirect);
+                  //lcd.setCursor(0, 1);
+                  Serial.print(longitude, 7);
+                  //lcd.setCursor(11, 1);
+                  Serial.println(longDirect);
                 }
                 break;
               case burnoutA:
-                lcd.print("Revs Complete:");
-                lcd.setCursor(0, 1);
-                lcd.print(completedRevs, 7);
+                Serial.print("Revs Complete: ");
+                //lcd.setCursor(0, 1);
+                Serial.println(completedRevs, 7);
                 break;
               case burnoutB:
-                lcd.print("Rotation Speed:");
-                lcd.setCursor(0, 1);
-                lcd.print(rotationVel, 5);
-                lcd.setCursor(9, 1);
-                lcd.print("rad/s");
+                Serial.print("Rotation Speed: ");
+                //lcd.setCursor(0, 1);
+                Serial.print(rotationVel, 5);
+                //lcd.setCursor(9, 1);
+                Serial.println(" rad/s");
                 break;
               case baro:
-                lcd.print("Altitude: ");
-                lcd.setCursor(0, 1);
-                lcd.print(altitude, 7);
-                lcd.setCursor(10, 1);
-                lcd.print("m");
+                Serial.print("Altitude: ");
+                //lcd.setCursor(0, 1);
+                Serial.print(altitude, 7);
+                //lcd.setCursor(10, 1);
+                Serial.println(" m");
                 break;
             }
             break;
 
           case 1: //Case one checks whether the three critical flags are the same between the ground station and the payload
-            if ((buf[1] == masterEnableFlag) && (buf[2] == finOverrideFlag) && (buf[3] == servoPowerFlag))
-              lcd.print("Flags all good!");
+            if ((buf[1] == masterEnableFlag) && (buf[2] == finOverrideFlag))
+              Serial.println("Flags all good!");
             else {
-              lcd.print("COMM ERR:");
+              Serial.print("COMM ERR:");
               if (buf[1] != masterEnableFlag) {
-                lcd.setCursor(12, 0);
-                lcd.print("1:X");
+                //lcd.setCursor(3, 1);
+                Serial.print(" 1:X");
               }
               if (buf[2] != finOverrideFlag) {
-                lcd.setCursor(3, 1);
-                lcd.print("2:X");
+                //lcd.setCursor(12, 1);
+                Serial.print(" 2:X");
               }
-              if (buf[3] != servoPowerFlag) {
-                lcd.setCursor(12, 1);
-                lcd.print("3:X");
-              }
+              Serial.println();
             }
             break;
           case 2: //Case 2 displays the flight state
             switch (flightState) {
               case 0:
-                lcd.print("Waiting");
+                Serial.println("Waiting");
                 break;
               case 1:
-                lcd.print("Launched");
+                Serial.println("Launched");
                 break;
               case 2:
-                lcd.print("Coasting");
+                Serial.println("Coasting");
                 break;
               case 3:
-                lcd.print("Falling");
+                Serial.println("Falling");
                 break;
               case 4:
-                lcd.print("Landed");
+                Serial.println("Landed");
                 break;
             }
             break;
           case 3:
             if (buf[7]) { //Datum 7 is the SD-working flag
-              lcd.print("SD Recording:");
-              lcd.setCursor(0, 1);
-              lcd.print("Working");
+              Serial.println("SD Recording Working.");
+              //lcd.setCursor(0, 1);
+              //Serial.print("Working");
             }
             else {
-              lcd.print("SD Recording:");
-              lcd.setCursor(0, 1);
-              lcd.print("Failure");
+              Serial.println("SD Recording Failure");
+              //lcd.setCursor(0, 1);
+              //Serial.print("Failure");
             }
             break;
           case 4: //Case 4 displays GPS altitude data if the GPS is enabled
             if (buf[5] == true) {
               if (gpsFix == 0 || gpsQuality == 0) {
-                lcd.print("No GPS fix.");
+                Serial.println("No GPS fix.");
               }
               else {
-                lcd.print("GPS Altitude:");
-                lcd.setCursor(0, 1);
-                lcd.print(altitude, 7);
-                lcd.setCursor(10, 1);
-                lcd.print("m");
+                Serial.print("GPS Altitude:");
+                //lcd.setCursor(0, 1);
+                Serial.print(altitude, 7);
+                //lcd.setCursor(10, 1);
+                Serial.println(" m");
               }
             }
             else {
-              lcd.print("No GPS data.");
+              Serial.println("No GPS data.");
             }
             break;
         }
 
         //Once data to the LCD have been displayed, update the LEDs with appropriate data
-      /*  if (buf[2] == 1) //Confirmation of the Fin Override Flag
-          digitalWrite(finOverLED, HIGH);
-        else
-          digitalWrite(finOverLED, LOW);*/
-
-        /*if (buf[3] == 1) //Confirmation of the Servo Power Flag
-          digitalWrite(finOnLED, HIGH);
-        else
-          digitalWrite(finOnLED, LOW);*/
 
         switch (buf[6]) { //Reports fin-position data
           case LEFT:
@@ -477,9 +461,9 @@ delay(100); //For timing purposes
 
       }
       else //If the data-retrieval statement returns FALSE, the packet is bad
-        lcd.print("ERR: Bad Packet");
+        Serial.println("ERR: Bad Packet");
 
-    digitalWrite(13, LOW);
+   digitalWrite(13, LOW);
     } //End of if(data received) section
   } //End of primary 'else' section (i.e. if we're not sending data)
 
