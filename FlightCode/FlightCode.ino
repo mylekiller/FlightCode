@@ -130,7 +130,7 @@ bool sdWorkingFlag = true; //Flag to note if SD initializes properly, since that
 bool masterEnableFlag = false; //Flag that puts the Arduino in/out of "sleep mode."
 bool finOverrideFlag = false; //Flag that acts as a "big red button" to stop the arduino's roll-control.
 
-const int timeDelay = 600; //In milliseconds
+const int timeDelay = 1500; //In milliseconds
 unsigned long rxTime = 0; //Variables for the radio transmitter double-pulse backup code
 
 
@@ -151,9 +151,9 @@ void setup() {
   gyro.enableAutoRange(true);
   gyro.begin();//Initialize the sensors
 
-          GPS.begin(9600); //Initialize GPS; define output set and data rate
-        GPS.sendCommand(PMTK_SET_NMEA_OUTPUT_RMCGGA);
-        GPS.sendCommand(PMTK_SET_NMEA_UPDATE_1HZ);
+  GPS.begin(9600); //Initialize GPS; define output set and data rate
+  GPS.sendCommand(PMTK_SET_NMEA_OUTPUT_RMCGGA);
+  GPS.sendCommand(PMTK_SET_NMEA_UPDATE_1HZ);
 
   SD.begin(stupidSDPin);
   if (!SD.begin(cardSelectPin)) //Initialize the SD card; set a flag if the initialization fails
@@ -186,9 +186,9 @@ void setup() {
 
   flightState = waiting; //Initialize switch variable
 
-   dataLog = SD.open("datalog.txt", FILE_WRITE);
-   dataLog.print("Total time,Flight time,Accel X,Accel Y,Accel Z,Gyro X,Gyro Y,Gyro Z,Baro Press,Baro Temp,Baro Alt,Latitude,Lat Heading,Longitude,Long Heading,GPS Alt,GPS Fix,Fix Quality,Battery %");
-   dataLog.close(); //Write the datalog header to the SD card (used for spreadsheet conversion)
+  dataLog = SD.open("datalog.txt", FILE_WRITE);
+  dataLog.print("Total time,Flight time,Accel X,Accel Y,Accel Z,Gyro X,Gyro Y,Gyro Z,Baro Press,Baro Temp,Baro Alt,Latitude,Lat Heading,Longitude,Long Heading,GPS Alt,GPS Fix,Fix Quality,Battery %");
+  dataLog.close(); //Write the datalog header to the SD card (used for spreadsheet conversion)
 }
 
 
@@ -331,7 +331,7 @@ void Record_Data(sensors_event_t event) { //Subroutine for saving sensor data to
   accelData[0] = event.acceleration.x;
   accelData[1] = event.acceleration.y;
   accelData[2] = event.acceleration.z;
-  
+
   gyro.getEvent(&event);
   gyroData[0] = event.gyro.x;
   gyroData[1] = event.gyro.y;
@@ -350,71 +350,76 @@ void Record_Data(sensors_event_t event) { //Subroutine for saving sensor data to
   timeData[0] = millis();
   timeData[1] = flightTime;
 
-if (gpsOnFlag) {
+  if (gpsOnFlag) {
     char c = GPS.read(); //Must call GPS.read() at some point for data transmission to occur
-  if (GPS.newNMEAreceived()) { //Update GPS data if an update is available
-    if (!GPS.parse(GPS.lastNMEA())) // this sets the newNMEAreceived() flag to false; prevents double(+)-update loop
-      return;
-  }
+    if (GPS.newNMEAreceived()) { //Update GPS data if an update is available
+      if (!GPS.parse(GPS.lastNMEA())) // this sets the newNMEAreceived() flag to false; prevents double(+)-update loop
+        return;
+    }
     gpsLatitude = GPS.latitude;
     gpsLongitude = GPS.longitude;
     gpsAltitude = GPS.altitude;
     gpsLatDirect = GPS.lat;
     gpsLonDirect = GPS.lon;
-    if(gpsLatitude != 0)
-    gpsFix = 1;
+    if (gpsLatitude != 0)
+      gpsFix = 1;
     else
-    gpsFix = GPS.fix;
+      gpsFix = GPS.fix;
     gpsFixQuality = GPS.fixquality;
 
-}
- 
+  }
+
 
   if (sdWorkingFlag) { //Only actually work with the SD card if the SD card is working
     dataLog = SD.open("datalog.txt", FILE_WRITE); //Open the file datalog.txt in write mode
+    delay(5);
 
     if (dataLog) { //log data only if the file opened properly
       dataLog.println(""); //Start a new line
-
+      delay(5);
       for (int c = 0; c < 2; c++) {
         dataLog.print(timeData[c]);
         dataLog.print(","); //Separate data entries by a comma
       }
-
+      delay(5);
       for (int c = 0; c < 3; c++) {
         dataLog.print(accelData[c]);
         dataLog.print(",");
       }
-
+      delay(5);
       for (int c = 0; c < 3; c++) {
         dataLog.print(gyroData[c]);
         dataLog.print(",");
       }
-
+      delay(5);
       for (int c = 0; c < 3; c++) {
         dataLog.print(baroData[c]);
         dataLog.print(",");
       }
-
+      delay(5);
       dataLog.print(gpsLatitude);
       dataLog.print(",");
       dataLog.print(gpsLatDirect);
       dataLog.print(",");
+      delay(5);
       dataLog.print(gpsLongitude);
       dataLog.print(",");
       dataLog.print(gpsLonDirect);
       dataLog.print(",");
+      delay(5);
       dataLog.print(gpsAltitude);
       dataLog.print(",");
       dataLog.print(gpsFix);
       dataLog.print(",");
+      delay(5);
       dataLog.print(gpsFixQuality);
       dataLog.print(",");
       dataLog.print(batteryLevel);
+      delay(5);
 
-      dataLog.close(); //Close the file
-      delay(50); //Necessary decrease in baud rate to prevent program from crashing when trying to access the SD card (memory overflow?)
-    } //Any value lower than 40 ms runs a serious risk of rapid program freeze
+      dataLog.close(); //Close the file //Necessary decrease in baud rate to prevent program from crashing when trying to access the SD card (memory overflow?)
+    } //Any value lower than 50 ms runs a serious risk of rapid program freeze
+    //New development: problem gets worse the fuller the SD card is! Make sure to periodically wipe
 
   }
 
@@ -499,7 +504,7 @@ void Radio_Transmit(void) {
 
       if (endRollFlag) {
         u.tempFloat = gyroData[2];
-         for (int c = 0; c < 4; c++) {
+        for (int c = 0; c < 4; c++) {
           packAddr++;
           radioPacket[packAddr] = u.tempArray[c];
         }
@@ -537,7 +542,7 @@ void Radio_Transmit(void) {
 
     if (rf95.available())
     {
-    digitalWrite(13, HIGH);
+      digitalWrite(13, HIGH);
       sendFlag = true; //If data is received, return to data-send mode
       uint8_t buf[RH_RF95_MAX_MESSAGE_LEN];
       uint8_t len = sizeof(buf); //Variables to contain received message
@@ -560,7 +565,7 @@ void Radio_Transmit(void) {
         if (buf[6] || buf[7] || buf[8]) {
           servoPowerFlag = true;
           digitalWrite(servoPowerPin, servoPowerFlag);
-              digitalWrite(13, LOW);
+          digitalWrite(13, LOW);
         }
 
       }
@@ -616,9 +621,9 @@ void BufferUpdate() { //Function to keep a running buffer of select sensor value
       float simpsonSum = gyroZBuffer[0] + gyroZBuffer[6];
       simpsonSum = simpsonSum + 4 * (gyroZBuffer[1] + gyroZBuffer[3] + gyroZBuffer[5]);
       simpsonSum = simpsonSum + 2 * (gyroZBuffer[2] + gyroZBuffer[4]);
-      simpsonSum = simpsonSum * deltaT/1000; //Hooray for numerical integration! Should look into whether there's a more efficient way to perform Simpson's rule here.
+      simpsonSum = simpsonSum * deltaT / 1000; //Hooray for numerical integration! Should look into whether there's a more efficient way to perform Simpson's rule here.
 
-      rotationCounter = rotationCounter + (simpsonSum / 6.28318531)*SIMPSON_SCALE_FACTOR; //Convert from radians to revolutions and increment the counter!
+      rotationCounter = rotationCounter + (simpsonSum / 6.28318531) * SIMPSON_SCALE_FACTOR; //Convert from radians to revolutions and increment the counter!
 
       for (int c = 0; c < 7; c++) {
         timeBuffer[c] = 0;

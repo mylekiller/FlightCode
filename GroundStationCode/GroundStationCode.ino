@@ -166,7 +166,7 @@ void loop()
   if (sendFlag) { //Transmit select commands to the payload
 
     uint8_t data[9];
-delay(100); //For timing purposes
+delay(300); //For timing purposes
     digitalWrite(13, HIGH);
     //Send everything in triplicate, for verification/reliability/data clarity purposes.
     data[0] = digitalRead(masterEnablePin);

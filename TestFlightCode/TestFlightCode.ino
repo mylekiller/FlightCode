@@ -136,6 +136,10 @@ unsigned long rxTime = 0; //Variables for the radio transmitter double-pulse bac
 
 
 void setup() {
+
+Serial.begin(9600);
+while(!Serial);
+  
   pinMode(RFM95_RST, OUTPUT); //Initialize radio; Reset pin must be high for normal function
   digitalWrite(RFM95_RST, HIGH);
 /*
@@ -443,11 +447,11 @@ if (gpsOnFlag) {
       dataLog.print(gpsFixQuality);
       dataLog.print(",");
       dataLog.print(batteryLevel);
-
+Serial.println("Code still working!");
       dataLog.close(); //Close the file
       delay(50); //Necessary decrease in baud rate to prevent program from crashing when trying to access the SD card (memory overflow?)
     } //Any value lower than 40 ms runs a serious risk of rapid program freeze
-
+Serial.println();
   }
 
 }
