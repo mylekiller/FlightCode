@@ -68,12 +68,12 @@ const int landed = falling + 1;
 int flightState;
 
 //I/O pins
-const int masterEnablePin = A0;
+const int masterEnablePin = A5;
 const int finOverridePin = A1;
 //const int servoPowerPin = A2; //Digital inputs for important flags
 const int buttonPin = A3;//Input to toggle display modes
 const int packetLED = A2; //Output pins for display LEDs
-const int mysteryLED = A5;
+const int mysteryLED = A0;
 const int finLLED = 5;
 const int finRLED = 20;
 const int finCLED = 21;
