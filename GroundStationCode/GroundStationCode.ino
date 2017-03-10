@@ -226,6 +226,9 @@ delay(300); //For timing purposes
     {
      digitalWrite(13, HIGH);
       sendFlag = true;
+     
+      lcd.begin(16, 2);
+      
       lcd.clear(); //Clear the LCD since new data is incoming
       lcd.setCursor(15, 1);
       lcd.print(buttonState);  //Always print the display mode in the bottom-right corner of the screen
@@ -373,6 +376,9 @@ delay(300); //For timing purposes
                 lcd.print(altitude, 7);
                 lcd.setCursor(10, 1);
                 lcd.print("m");
+                break;
+                default:
+                lcd.print("No Data");
                 break;
             }
             break;
