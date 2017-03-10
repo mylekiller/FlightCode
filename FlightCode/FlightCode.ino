@@ -316,7 +316,7 @@ void Set_Servo(int current, int goal) { //Subroutine which takes current positio
       digitalWrite(statePinA, HIGH);
 
     digitalWrite(controlPin, LOW); //Once the output pins have been set properly, pulse the control pin to update the servo.
-    delay(10);
+    delay(5);
     digitalWrite(controlPin, HIGH);
 
     finPosition = goal; //Update the fin state tracking variable
