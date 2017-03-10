@@ -52,7 +52,6 @@ Adafruit_GPS GPS(&GPSSerial); //Construct instance of the GPS object
 const int cardSelectPin = 10; //Note: for some incredibly stupid reason, you must initialize on pin 8 first for proper functionality
 const int stupidSDPin = 8;
 File dataLog; //File to log flight data
-File logTwo;
 float accelData[3];
 float gyroData[3];
 float baroData[3]; //Char buffers for storing sensor data
@@ -89,7 +88,7 @@ const int CENTER = 1;
 const int LEFT = 2;
 int finPosition = CENTER; //Since the servo moves based on increments and not absolute positions, these constants and variable are needed to track the fins' position.
 
-bool servoPowerFlag = false;
+bool servoPowerFlag = true;
 const int servoPowerPin = 6; //Flag and pin to power on/off the servo with a transistor
 
 const int batteryPin = 9; //Built-in power tracking pin
@@ -103,8 +102,8 @@ const int falling = burnout + 1;
 const int landed = falling + 1;
 int flightState; //Variable for switch case
 
-const int LIFTOFF_ACCEL_THRESHOLD = 38;
-const int BURNOUT_ACCEL_THRESHOLD = 12; //Constants for flight staging calculation
+const int LIFTOFF_ACCEL_THRESHOLD = 12;
+const int BURNOUT_ACCEL_THRESHOLD = 4; //Constants for flight staging calculation
 const int BURNOUT_BARO_THRESHOLD = 610; //Accel values are in m/s^2, baro values are in m, and time is in milliseconds
 const int BURNOUT_TIME_THRESHOLD = 5500;
 const int APOGEE_ACCEL_THRESHOLD = 23;
@@ -125,28 +124,28 @@ float rotationCounter = 0; //Variable for tracking rotation, in revolutions
 
 bool sendFlag = true; //Flag for toggling send/receive mode; makes 2-way communication much easier
 bool radioWorkingFlag = true; //Flag to determine if radio initialized properly. If not, then it continues on without comms
-bool gpsOnFlag = true; //Flag to determine whether GPS is currently operating/enabled
+bool gpsOnFlag = false; //Flag to determine whether GPS is currently operating/enabled
 bool sdWorkingFlag = true; //Flag to note if SD initializes properly, since that has been a problem in the past.
 
 bool masterEnableFlag = true; //Flag that puts the Arduino in/out of "sleep mode."
 bool finOverrideFlag = false; //Flag that acts as a "big red button" to stop the arduino's roll-control.
 
-const int timeDelay = 600; //In milliseconds
+const int timeDelay = 1500; //In milliseconds
 unsigned long rxTime = 0; //Variables for the radio transmitter double-pulse backup code
 
 
 void setup() {
-
-Serial.begin(9600);
-while(!Serial);
+  Serial.begin(9600);
+  while(!Serial);
+Serial.println("Code can begin now");
   
   pinMode(RFM95_RST, OUTPUT); //Initialize radio; Reset pin must be high for normal function
   digitalWrite(RFM95_RST, HIGH);
-/*
+
   pinMode(controlPin, OUTPUT);
   pinMode(statePinA, OUTPUT);
   pinMode(statePinB, OUTPUT);
-  pinMode(servoPowerPin, OUTPUT);*/
+  pinMode(servoPowerPin, OUTPUT);
   pinMode(batteryPin, INPUT);
 
   pinMode(13, OUTPUT);
@@ -164,8 +163,8 @@ while(!Serial);
   if (!SD.begin(cardSelectPin)) //Initialize the SD card; set a flag if the initialization fails
     sdWorkingFlag = false;
 
- // digitalWrite(controlPin, HIGH); //Set the servo control pin to low to make sure it doesn't pulse accidentally
-  //digitalWrite(servoPowerPin, servoPowerFlag); //Make sure the servo is powered off
+  digitalWrite(controlPin, HIGH); //Set the servo control pin to low to make sure it doesn't pulse accidentally
+  digitalWrite(servoPowerPin, servoPowerFlag); //Make sure the servo is powered off
 
   //Manual radio reset
   digitalWrite(RFM95_RST, LOW);
@@ -228,25 +227,16 @@ void loop() {
       {
         flightState = launched;
         startTime = millis();
-        logTwo = SD.open("logtwo.txt", FILE_WRITE);
-        logTwo.print("Abs time ");
-        logTwo.print(millis());
-        logTwo.println(": And we have liftoff!!!");
-        delay(10);
-        logTwo.close();
+        Serial.println("AND WE HAVE LIFTOFF!");
       }
       break;
 
 
     case launched:
-      if ((accelAverage < BURNOUT_ACCEL_THRESHOLD) || (baroAverage > BURNOUT_BARO_THRESHOLD) || (flightTime > BURNOUT_TIME_THRESHOLD))
+      if ((baroAverage > BURNOUT_BARO_THRESHOLD) || (flightTime > BURNOUT_TIME_THRESHOLD))
       {
         flightState = burnout;
-        logTwo = SD.open("logtwo.txt", FILE_WRITE);
-        logTwo.print(flightTime);
-        logTwo.println(": Entering coast phase");
-        delay(10);
-        logTwo.close();
+        Serial.println("Entering coast phase");
       }
       break;
 
@@ -258,11 +248,7 @@ void loop() {
       if (flightTime > APOGEE_TIME_THRESHOLD) //Add a baro test here?
       {
         flightState = falling;
-        logTwo = SD.open("logtwo.txt", FILE_WRITE);
-        logTwo.print(flightTime);
-        logTwo.println(": Apogee achieved.");
-        delay(10);
-        logTwo.close();
+        Serial.println("Roll control ending. Apogee reached.");
       }
       break;
 
@@ -271,21 +257,12 @@ void loop() {
       if (baroAverage < LANDED_BARO_THRESHOLD)
       {
         flightState = landed;
-        logTwo = SD.open("logtwo.txt", FILE_WRITE);
-        logTwo.print(flightTime);
-        logTwo.println(": Landed.");
-        delay(10);
-        logTwo.close();
+        Serial.println("And we have landed!");
       }
 
       if (baroAverage < GPS_BARO_THRESHOLD) //Enable GPS if we're low enough
       {
         gpsOnFlag = true;
-        logTwo = SD.open("logtwo.txt", FILE_WRITE);
-        logTwo.print(flightTime);
-        logTwo.println(": In real flight, GPS would enable here.");
-        delay(10);
-        logTwo.close();
       }
 
       break;
@@ -301,36 +278,31 @@ void Roll_Control(sensors_event_t event) {
   if (!startRollFlag) { //For roll initialization, cant fins in the direction of current roll
     startRollFlag = true;
     if (event.gyro.z < 0) {
-     // Set_Servo(finPosition, LEFT); //Since negative values are clockwise
+      Set_Servo(finPosition, LEFT); //Since negative values are clockwise
     }
     else {
-      //Set_Servo(finPosition, RIGHT);
+      Set_Servo(finPosition, RIGHT);
     }
   }
   else if (!endRollFlag) { //Wait until two revolutions have ben completed to begin counter-roll
 
     if (fabs(rotationCounter) > 2) {
-      //Set_Servo(finPosition, abs(finPosition - 2)); //This will output LEFT if finPosition = RIGHT, and vice-versa
+      Set_Servo(finPosition, abs(finPosition - 2)); //This will output LEFT if finPosition = RIGHT, and vice-versa
       endRollFlag = true;
-      logTwo = SD.open("logtwo.txt", FILE_WRITE);
-        logTwo.print(flightTime);
-        logTwo.println(": Two revolutions complete.");
-        delay(10);
-        logTwo.close();
     }
   }
   else { //At this point, continue to make adjustments to prevent roll
     if (abs(event.gyro.z) < MIN_ROLL_THRESHOLD)
     {
-     // Set_Servo(finPosition, CENTER);
+      Set_Servo(finPosition, CENTER);
     }
     else if (event.gyro.z < 0)
     {
-      //Set_Servo(finPosition, RIGHT);
+      Set_Servo(finPosition, RIGHT);
     }
     else if (event.gyro.z > 0)
     {
-      //Set_Servo(finPosition, LEFT);
+      Set_Servo(finPosition, LEFT);
     }
   }
 
@@ -408,50 +380,55 @@ if (gpsOnFlag) {
 
   if (sdWorkingFlag) { //Only actually work with the SD card if the SD card is working
     dataLog = SD.open("datalog.txt", FILE_WRITE); //Open the file datalog.txt in write mode
+    delay(5);
 
     if (dataLog) { //log data only if the file opened properly
       dataLog.println(""); //Start a new line
-
+delay(5);
       for (int c = 0; c < 2; c++) {
         dataLog.print(timeData[c]);
         dataLog.print(","); //Separate data entries by a comma
       }
-
+delay(5);
       for (int c = 0; c < 3; c++) {
         dataLog.print(accelData[c]);
         dataLog.print(",");
       }
-
+delay(5);
       for (int c = 0; c < 3; c++) {
         dataLog.print(gyroData[c]);
         dataLog.print(",");
       }
-
+delay(5);
       for (int c = 0; c < 3; c++) {
         dataLog.print(baroData[c]);
         dataLog.print(",");
       }
-
+delay(5);
       dataLog.print(gpsLatitude);
       dataLog.print(",");
       dataLog.print(gpsLatDirect);
       dataLog.print(",");
+      delay(5);
       dataLog.print(gpsLongitude);
       dataLog.print(",");
       dataLog.print(gpsLonDirect);
       dataLog.print(",");
+      delay(5);
       dataLog.print(gpsAltitude);
       dataLog.print(",");
       dataLog.print(gpsFix);
       dataLog.print(",");
+      delay(5);
       dataLog.print(gpsFixQuality);
       dataLog.print(",");
       dataLog.print(batteryLevel);
-Serial.println("Code still working!");
+      delay(5);
+
       dataLog.close(); //Close the file
-      delay(50); //Necessary decrease in baud rate to prevent program from crashing when trying to access the SD card (memory overflow?)
+      //Necessary decrease in baud rate to prevent program from crashing when trying to access the SD card (memory overflow?)
     } //Any value lower than 40 ms runs a serious risk of rapid program freeze
-Serial.println();
+
   }
 
 }
@@ -585,8 +562,10 @@ void Radio_Transmit(void) {
         //finOverrideFlag acts as a master interrupt to halt in-flight fin rotation.
         //servoPowerFlag controls the transistor powering the servo (so that it isn't enabled until the fin guide is in place)
 
-        if (buf[0] || buf[1] || buf[2])
+        if (buf[0] || buf[1] || buf[2]){
           masterEnableFlag = true;
+          Serial.println("Enabling Data Processing");
+        }
 
         if (buf[3] || buf[4] || buf[5])
           finOverrideFlag = true;
@@ -596,8 +575,9 @@ void Radio_Transmit(void) {
         if (buf[6] || buf[7] || buf[8]) {
           servoPowerFlag = true;
           digitalWrite(servoPowerPin, servoPowerFlag);
-              digitalWrite(13, LOW);
+          Serial.println("Enabling Servo Power");
         }
+        digitalWrite(13, LOW);
 
       }
     }
@@ -607,6 +587,7 @@ void Radio_Transmit(void) {
 
   }
 }
+
 
 
 
@@ -629,6 +610,10 @@ void BufferUpdate() { //Function to keep a running buffer of select sensor value
   accelAverage /= 5;
   baroAverage /= 5;
   baroAverage = baroAverage - startAlt; //Have to compare the average to the ground, not sea level
+if(flightState == waiting){
+Serial.print("Accelerometer average: ");
+Serial.println(accelAverage);
+}
 
   if (flightState == burnout && !endRollFlag) { //Keep track of rotations once we transition to the burnout stage
     /*
@@ -655,7 +640,8 @@ void BufferUpdate() { //Function to keep a running buffer of select sensor value
       simpsonSum = simpsonSum * deltaT/1000; //Hooray for numerical integration! Should look into whether there's a more efficient way to perform Simpson's rule here.
 
       rotationCounter = rotationCounter + (simpsonSum / 6.28318531)*SIMPSON_SCALE_FACTOR; //Convert from radians to revolutions and increment the counter!
-
+Serial.print("Rotations complete: ");
+Serial.println(rotationCounter);
       for (int c = 0; c < 7; c++) {
         timeBuffer[c] = 0;
         gyroZBuffer[c] = 0; //Don't forget to clear the buffers for the next step!

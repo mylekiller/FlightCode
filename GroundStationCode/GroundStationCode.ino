@@ -184,7 +184,7 @@ delay(300); //For timing purposes
       masterEnableFlag = true;
     if (data[4])
       finOverrideFlag = true; //Just like in the flight code, set flags true if the three overrides are ever pressed
-   // if (data[7])
+   //if (data[7])
      // servoPowerFlag = true; //This allows us to compare what we've sent and what the payload does
 
     rf95.send(data, 9);
