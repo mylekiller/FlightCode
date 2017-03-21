@@ -80,16 +80,16 @@ long startTime = 0; //variable to note flight time
 long flightTime = 0;
 
 //Constants for servo pin output
-const int controlPin = 10; //"control" is the pin which is pulsed to trigger the servo to move
-const int statePinA = 12; //The state of pins A and B determines which of four motions the servo takes when the control pin is pulsed.
-const int statePinB = 11; // If B is low, move 1 position, if B is high, move two positions. High A is negative (counterclockwise?), low A is positive (clockwise?)
-const int RIGHT = 0;
-const int CENTER = 1;
-const int LEFT = 2;
+int controlPin = 10; //"control" is the pin which is pulsed to trigger the servo to move
+int statePinA = 12; //The state of pins A and B determines which of four motions the servo takes when the control pin is pulsed.
+int statePinB = 11; // If B is low, move 1 position, if B is high, move two positions. High A is negative (counterclockwise?), low A is positive (clockwise?)
+int RIGHT = 0;
+int CENTER = 1;
+int LEFT = 2;
 int finPosition = CENTER; //Since the servo moves based on increments and not absolute positions, these constants and variable are needed to track the fins' position.
 
 bool servoPowerFlag = true;
-const int servoPowerPin = 6; //Flag and pin to power on/off the servo with a transistor
+int servoPowerPin = 5; //Flag and pin to power on/off the servo with a transistor
 
 const int batteryPin = 9; //Built-in power tracking pin
 float batteryLevel = 100; //Battery power, in percentage
@@ -102,7 +102,7 @@ const int falling = burnout + 1;
 const int landed = falling + 1;
 int flightState; //Variable for switch case
 
-const int LIFTOFF_ACCEL_THRESHOLD = 12;
+const int LIFTOFF_ACCEL_THRESHOLD = 38;
 const int BURNOUT_ACCEL_THRESHOLD = 4; //Constants for flight staging calculation
 const int BURNOUT_BARO_THRESHOLD = 610; //Accel values are in m/s^2, baro values are in m, and time is in milliseconds
 const int BURNOUT_TIME_THRESHOLD = 5500;
@@ -136,7 +136,6 @@ unsigned long rxTime = 0; //Variables for the radio transmitter double-pulse bac
 
 void setup() {
   Serial.begin(9600);
-  while(!Serial);
 Serial.println("Code can begin now");
   
   pinMode(RFM95_RST, OUTPUT); //Initialize radio; Reset pin must be high for normal function
@@ -164,7 +163,7 @@ Serial.println("Code can begin now");
     sdWorkingFlag = false;
 
   digitalWrite(controlPin, HIGH); //Set the servo control pin to low to make sure it doesn't pulse accidentally
-  digitalWrite(servoPowerPin, servoPowerFlag); //Make sure the servo is powered off
+  digitalWrite(servoPowerPin, HIGH); //Make sure the servo is powered off
 
   //Manual radio reset
   digitalWrite(RFM95_RST, LOW);
@@ -193,12 +192,16 @@ Serial.println("Code can begin now");
    dataLog = SD.open("datalog.txt", FILE_WRITE);
    dataLog.print("Total time,Flight time,Accel X,Accel Y,Accel Z,Gyro X,Gyro Y,Gyro Z,Baro Press,Baro Temp,Baro Alt,Latitude,Lat Heading,Longitude,Long Heading,GPS Alt,GPS Fix,Fix Quality,Battery %");
    dataLog.close(); //Write the datalog header to the SD card (used for spreadsheet conversion)
+  digitalWrite(controlPin, HIGH);
+  digitalWrite(servoPowerPin, HIGH);
+  delay(100);
 }
 
 
 
-void loop() {
 
+void loop() {
+   
   /* Get a new sensor event */
   sensors_event_t mainEvent;
 
@@ -380,51 +383,50 @@ if (gpsOnFlag) {
 
   if (sdWorkingFlag) { //Only actually work with the SD card if the SD card is working
     dataLog = SD.open("datalog.txt", FILE_WRITE); //Open the file datalog.txt in write mode
-    delay(5);
 
     if (dataLog) { //log data only if the file opened properly
       dataLog.println(""); //Start a new line
-delay(5);
+
       for (int c = 0; c < 2; c++) {
         dataLog.print(timeData[c]);
         dataLog.print(","); //Separate data entries by a comma
       }
-delay(5);
+
       for (int c = 0; c < 3; c++) {
         dataLog.print(accelData[c]);
         dataLog.print(",");
       }
-delay(5);
+
       for (int c = 0; c < 3; c++) {
         dataLog.print(gyroData[c]);
         dataLog.print(",");
       }
-delay(5);
+
       for (int c = 0; c < 3; c++) {
         dataLog.print(baroData[c]);
         dataLog.print(",");
       }
-delay(5);
+
       dataLog.print(gpsLatitude);
       dataLog.print(",");
       dataLog.print(gpsLatDirect);
       dataLog.print(",");
-      delay(5);
+    
       dataLog.print(gpsLongitude);
       dataLog.print(",");
       dataLog.print(gpsLonDirect);
       dataLog.print(",");
-      delay(5);
+      
       dataLog.print(gpsAltitude);
       dataLog.print(",");
       dataLog.print(gpsFix);
       dataLog.print(",");
-      delay(5);
+     
       dataLog.print(gpsFixQuality);
       dataLog.print(",");
       dataLog.print(batteryLevel);
-      delay(5);
-
+      
+      delay(50);
       dataLog.close(); //Close the file
       //Necessary decrease in baud rate to prevent program from crashing when trying to access the SD card (memory overflow?)
     } //Any value lower than 40 ms runs a serious risk of rapid program freeze
@@ -574,7 +576,8 @@ void Radio_Transmit(void) {
 
         if (buf[6] || buf[7] || buf[8]) {
           servoPowerFlag = true;
-          digitalWrite(servoPowerPin, servoPowerFlag);
+          digitalWrite(servoPowerPin, HIGH);
+          digitalWrite(controlPin, HIGH);
           Serial.println("Enabling Servo Power");
         }
         digitalWrite(13, LOW);
