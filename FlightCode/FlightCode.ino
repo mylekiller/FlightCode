@@ -89,7 +89,7 @@ const int LEFT = 2;
 int finPosition = CENTER; //Since the servo moves based on increments and not absolute positions, these constants and variable are needed to track the fins' position.
 
 bool servoPowerFlag = false;
-const int servoPowerPin = 6; //Flag and pin to power on/off the servo with a transistor
+const int servoPowerPin = 5; //Flag and pin to power on/off the servo with a transistor
 
 const int batteryPin = 9; //Built-in power tracking pin
 float batteryLevel = 100; //Battery power, in percentage
@@ -109,7 +109,7 @@ const int BURNOUT_TIME_THRESHOLD = 5500;
 const int APOGEE_ACCEL_THRESHOLD = 23;
 const int APOGEE_TIME_THRESHOLD = 20000;
 const int LANDED_BARO_THRESHOLD = 10;
-const int MIN_ROLL_THRESHOLD = 0.05;
+const float MIN_ROLL_THRESHOLD = 0.075;
 
 const float GYRO_DRIFT_FACTOR = 0.006; //Factors for use in calculating completed rotations properly
 const float SIMPSON_SCALE_FACTOR = 1.51;
@@ -189,6 +189,9 @@ void setup() {
   dataLog = SD.open("datalog.txt", FILE_WRITE);
   dataLog.print("Total time,Flight time,Accel X,Accel Y,Accel Z,Gyro X,Gyro Y,Gyro Z,Baro Press,Baro Temp,Baro Alt,Latitude,Lat Heading,Longitude,Long Heading,GPS Alt,GPS Fix,Fix Quality,Battery %");
   dataLog.close(); //Write the datalog header to the SD card (used for spreadsheet conversion)
+  digitalWrite(controlPin, HIGH);
+  digitalWrite(servoPowerPin, HIGH);
+  delay(100);
 }
 
 
@@ -316,7 +319,7 @@ void Set_Servo(int current, int goal) { //Subroutine which takes current positio
       digitalWrite(statePinA, HIGH);
 
     digitalWrite(controlPin, LOW); //Once the output pins have been set properly, pulse the control pin to update the servo.
-    delay(5);
+    delay(7);
     digitalWrite(controlPin, HIGH);
 
     finPosition = goal; //Update the fin state tracking variable
