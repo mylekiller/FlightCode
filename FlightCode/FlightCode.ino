@@ -61,7 +61,9 @@ float accelZBuffer[5] = {0, 0, 0, 0, 0};
 float baroAltBuffer[5] = {0, 0, 0, 0, 0};
 float gyroZBuffer[7] = {0, 0, 0, 0, 0, 0, 0}; //The other values are arbitrary; this one is used in Simpsons Rule, so it MUST BE ODD!
 float timeBuffer[7] = {0, 0, 0, 0, 0, 0, 0}; //Must equal the size of gyroZBuffer; used for the same calculations.
+float gyroZBuffer2[5] = {0, 0, 0, 0, 0};
 
+float gyroAverage;
 float accelAverage;
 float baroAverage; //Averages of the above buffer values
 
@@ -87,6 +89,8 @@ const int RIGHT = 0;
 const int CENTER = 1;
 const int LEFT = 2;
 int finPosition = CENTER; //Since the servo moves based on increments and not absolute positions, these constants and variable are needed to track the fins' position.
+long lastTime = 0; //Variable to keep track of the time between servo pulses
+
 
 bool servoPowerFlag = false;
 const int servoPowerPin = 5; //Flag and pin to power on/off the servo with a transistor
@@ -192,6 +196,16 @@ void setup() {
   digitalWrite(controlPin, HIGH);
   digitalWrite(servoPowerPin, HIGH);
   delay(100);
+
+  for(int c = 0; c < 5; c++) { //Initialize gyro average buffer beforehand because time is limited
+  sensors_event_t event; 
+  gyro.getEvent(&event);
+  gyroData[0] = event.gyro.x;
+  gyroData[1] = event.gyro.y;
+  gyroData[2] = event.gyro.z;
+  gyroZBuffer2[c] = gyroData[2];
+  }
+  
 }
 
 
@@ -307,7 +321,7 @@ void Roll_Control(sensors_event_t event) {
 void Set_Servo(int current, int goal) { //Subroutine which takes current position and intended position and turns those into a servo output.
   //(I think this is more efficient/adaptive than writing the same thing out multiple times in Roll_Control()?
 
-  if (current != goal) { //Only run the fin-setting pulse and delay if motion is necessary
+  if (current != goal && millis() - lastTime > 500) { //Only run the fin-setting pulse and delay if motion is necessary
     if (abs(current - goal) == 2)
       digitalWrite(statePinB, HIGH); //If moving from right to left, or vice-versa, pin B needs to be high.
     else
@@ -318,11 +332,14 @@ void Set_Servo(int current, int goal) { //Subroutine which takes current positio
     else//Otherwise, we are rotating from left to right: clockwise: negative, so A should be high
       digitalWrite(statePinA, HIGH);
 
+    delay(25);
+
     digitalWrite(controlPin, LOW); //Once the output pins have been set properly, pulse the control pin to update the servo.
     delay(7);
     digitalWrite(controlPin, HIGH);
 
     finPosition = goal; //Update the fin state tracking variable
+    lastTime = millis();
   }
 
 }
@@ -602,41 +619,53 @@ void BufferUpdate() { //Function to keep a running buffer of select sensor value
   baroAverage /= 5;
   baroAverage = baroAverage - startAlt; //Have to compare the average to the ground, not sea level
 
-  if (flightState == burnout && !endRollFlag) { //Keep track of rotations once we transition to the burnout stage
-    /*
-       This section functions stepwise. Once the two buffers are full, the algorithm performs numerical
-       integration, increments rollCounter, and flushes the buffers before starting over.
-    */
-    if (timeBuffer[6] < 1) { //If the buffers are not yet full; avoiding == 0 because it's a floating point
+  if (flightState == burnout) { //Keep track of rotations once we transition to the burnout stage
+    if (!endRollFlag) {
+      /*
+         This section functions stepwise. Once the two buffers are full, the algorithm performs numerical
+         integration, increments rollCounter, and flushes the buffers before starting over.
+      */
+      if (timeBuffer[6] < 1) { //If the buffers are not yet full; avoiding == 0 because it's a floating point
 
-      for (int c = 0; c < 6; c++) {
-        timeBuffer[6 - c] = timeBuffer[5 - c];
-        gyroZBuffer[6 - c] = gyroZBuffer[5 - c];
-      }
-      timeBuffer[0] = millis();
-      gyroZBuffer[0] = gyroData[2] - GYRO_DRIFT_FACTOR; //Again, this buffer should be up-to-date
+        for (int c = 0; c < 6; c++) {
+          timeBuffer[6 - c] = timeBuffer[5 - c];
+          gyroZBuffer[6 - c] = gyroZBuffer[5 - c];
+        }
+        timeBuffer[0] = millis();
+        gyroZBuffer[0] = gyroData[2] - GYRO_DRIFT_FACTOR; //Again, this buffer should be up-to-date
 
-    }
-
-    else { //Once the buffers are full, perform the integration!
-
-      float deltaT = (timeBuffer[0] - timeBuffer[6]) / 18; //Note: the average is technically /6, but since Simpson's Rule adds a /3 anyways, it's just more efficient to combine them
-      float simpsonSum = gyroZBuffer[0] + gyroZBuffer[6];
-      simpsonSum = simpsonSum + 4 * (gyroZBuffer[1] + gyroZBuffer[3] + gyroZBuffer[5]);
-      simpsonSum = simpsonSum + 2 * (gyroZBuffer[2] + gyroZBuffer[4]);
-      simpsonSum = simpsonSum * deltaT / 1000; //Hooray for numerical integration! Should look into whether there's a more efficient way to perform Simpson's rule here.
-
-      rotationCounter = rotationCounter + (simpsonSum / 6.28318531) * SIMPSON_SCALE_FACTOR; //Convert from radians to revolutions and increment the counter!
-
-      for (int c = 0; c < 7; c++) {
-        timeBuffer[c] = 0;
-        gyroZBuffer[c] = 0; //Don't forget to clear the buffers for the next step!
       }
 
-    }
+      else { //Once the buffers are full, perform the integration!
 
+        float deltaT = (timeBuffer[0] - timeBuffer[6]) / 18; //Note: the average is technically /6, but since Simpson's Rule adds a /3 anyways, it's just more efficient to combine them
+        float simpsonSum = gyroZBuffer[0] + gyroZBuffer[6];
+        simpsonSum = simpsonSum + 4 * (gyroZBuffer[1] + gyroZBuffer[3] + gyroZBuffer[5]);
+        simpsonSum = simpsonSum + 2 * (gyroZBuffer[2] + gyroZBuffer[4]);
+        simpsonSum = simpsonSum * deltaT / 1000; //Hooray for numerical integration! Should look into whether there's a more efficient way to perform Simpson's rule here.
+
+        rotationCounter = rotationCounter + (simpsonSum / 6.28318531) * SIMPSON_SCALE_FACTOR; //Convert from radians to revolutions and increment the counter!
+
+        for (int c = 0; c < 7; c++) {
+          timeBuffer[c] = 0;
+          gyroZBuffer[c] = 0; //Don't forget to clear the buffers for the next step!
+        }
+
+      }
+    }
+    else {
+      gyroAverage = 0;
+
+      for (int c = 0; c < 4; c++) {
+        gyroZBuffer2[4 - c] = gyroZBuffer2[3 - c];
+      }
+      gyroZBuffer2[0] = gyroData[2];
+
+      for (int c = 0; c < 5; c++) {
+        gyroAverage = gyroAverage + gyroZBuffer2[c];
+      }
+      gyroAverage /= 5;
+    }
   }
-
 }
-
 
