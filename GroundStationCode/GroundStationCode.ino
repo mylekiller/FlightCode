@@ -169,13 +169,13 @@ void loop()
 delay(300); //For timing purposes
     digitalWrite(13, HIGH);
     //Send everything in triplicate, for verification/reliability/data clarity purposes.
-    data[0] = digitalRead(masterEnablePin);
+    data[0] = 1;//digitalRead(masterEnablePin);
     data[1] = digitalRead(masterEnablePin); //Enables data processing
     data[2] = digitalRead(masterEnablePin);
     data[3] = digitalRead(finOverridePin);
     data[4] = digitalRead(finOverridePin); //Forcibly sets fins to vertical
     data[5] = digitalRead(finOverridePin);
-    data[6] = digitalRead(masterEnablePin);
+    data[6] = 1;//digitalRead(masterEnablePin);
     data[7] = digitalRead(masterEnablePin); //Enables data processing
     data[8] = digitalRead(masterEnablePin);
     data[9] = 0; //Necessary end tag

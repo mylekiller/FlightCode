@@ -1,10 +1,10 @@
 /*
-   Notre Dame Rocket Team Roll Control Payload Master Code V. 1.2.1
-   Aidan McDonald, 2/13/17
-   Kyle Miller, 2/2/17
+   Notre Dame Rocket Team Roll Control Payload Master Code V. 1.4 (REAL_FLIGHT_CODE V1!!!)
+   Aidan McDonald, 4/2/17
+   Kyle Miller, 4/2/17
 
    Most recent changes:
-   I/O pins set to proper values!!! (Flight-test ready!!!!)
+   Fixed roll-controll subroutine based on test results
 
 
    To-dones:
@@ -92,7 +92,7 @@ int finPosition = CENTER; //Since the servo moves based on increments and not ab
 long lastTime = 0; //Variable to keep track of the time between servo pulses
 
 
-bool servoPowerFlag = false;
+bool servoPowerFlag = true;
 const int servoPowerPin = 5; //Flag and pin to power on/off the servo with a transistor
 
 const int batteryPin = 9; //Built-in power tracking pin
@@ -116,7 +116,7 @@ const int LANDED_BARO_THRESHOLD = 10;
 const float MIN_ROLL_THRESHOLD = 0.075;
 
 const float GYRO_DRIFT_FACTOR = 0.006; //Factors for use in calculating completed rotations properly
-const float SIMPSON_SCALE_FACTOR = 1.51;
+const float SIMPSON_SCALE_FACTOR = 1.55;
 
 const int GPS_BARO_THRESHOLD = 200; //600 feet/200m is when the recovery system deploys
 const int MAX_PACKET_SIZE = 24; //The one and only constant you will ever need to update for packet-related reasons
@@ -131,7 +131,7 @@ bool radioWorkingFlag = true; //Flag to determine if radio initialized properly.
 bool gpsOnFlag = false; //Flag to determine whether GPS is currently operating/enabled
 bool sdWorkingFlag = true; //Flag to note if SD initializes properly, since that has been a problem in the past.
 
-bool masterEnableFlag = false; //Flag that puts the Arduino in/out of "sleep mode."
+bool masterEnableFlag = true; //Flag that puts the Arduino in/out of "sleep mode."
 bool finOverrideFlag = false; //Flag that acts as a "big red button" to stop the arduino's roll-control.
 
 const int timeDelay = 1500; //In milliseconds
@@ -164,7 +164,7 @@ void setup() {
     sdWorkingFlag = false;
 
   digitalWrite(controlPin, HIGH); //Set the servo control pin to low to make sure it doesn't pulse accidentally
-  digitalWrite(servoPowerPin, servoPowerFlag); //Make sure the servo is powered off
+  digitalWrite(servoPowerPin, HIGH); //Make sure the servo is powered off
 
   //Manual radio reset
   digitalWrite(RFM95_RST, LOW);
@@ -194,7 +194,7 @@ void setup() {
   dataLog.print("Total time,Flight time,Accel X,Accel Y,Accel Z,Gyro X,Gyro Y,Gyro Z,Baro Press,Baro Temp,Baro Alt,Latitude,Lat Heading,Longitude,Long Heading,GPS Alt,GPS Fix,Fix Quality,Battery %");
   dataLog.close(); //Write the datalog header to the SD card (used for spreadsheet conversion)
   digitalWrite(controlPin, HIGH);
-  digitalWrite(servoPowerPin, HIGH);
+  digitalWrite(servoPowerPin, LOW);
   delay(100);
 
   for(int c = 0; c < 5; c++) { //Initialize gyro average buffer beforehand because time is limited
@@ -254,7 +254,7 @@ void loop() {
 
     case burnout:
 
-      Roll_Control(mainEvent);
+      Roll_Control();
 
       if (flightTime > APOGEE_TIME_THRESHOLD) //Add a baro test here?
       {
@@ -282,11 +282,11 @@ void loop() {
   }
 }
 
-void Roll_Control(sensors_event_t event) {
+void Roll_Control() {
 
   if (!startRollFlag) { //For roll initialization, cant fins in the direction of current roll
     startRollFlag = true;
-    if (event.gyro.z < 0) {
+    if (gyroData[2] < 0) {
       Set_Servo(finPosition, LEFT); //Since negative values are clockwise
     }
     else {
@@ -301,15 +301,15 @@ void Roll_Control(sensors_event_t event) {
     }
   }
   else { //At this point, continue to make adjustments to prevent roll
-    if (abs(event.gyro.z) < MIN_ROLL_THRESHOLD)
+    if (fabs(gyroAverage) < MIN_ROLL_THRESHOLD)
     {
       Set_Servo(finPosition, CENTER);
     }
-    else if (event.gyro.z < 0)
+    else if (gyroAverage < 0)
     {
       Set_Servo(finPosition, RIGHT);
     }
-    else if (event.gyro.z > 0)
+    else if (gyroAverage > 0)
     {
       Set_Servo(finPosition, LEFT);
     }
@@ -321,7 +321,7 @@ void Roll_Control(sensors_event_t event) {
 void Set_Servo(int current, int goal) { //Subroutine which takes current position and intended position and turns those into a servo output.
   //(I think this is more efficient/adaptive than writing the same thing out multiple times in Roll_Control()?
 
-  if (current != goal && millis() - lastTime > 500) { //Only run the fin-setting pulse and delay if motion is necessary
+  if (current != goal && millis() - lastTime > 1000) { //Only run the fin-setting pulse and delay if motion is necessary
     if (abs(current - goal) == 2)
       digitalWrite(statePinB, HIGH); //If moving from right to left, or vice-versa, pin B needs to be high.
     else
@@ -332,7 +332,7 @@ void Set_Servo(int current, int goal) { //Subroutine which takes current positio
     else//Otherwise, we are rotating from left to right: clockwise: negative, so A should be high
       digitalWrite(statePinA, HIGH);
 
-    delay(25);
+    delay(50);
 
     digitalWrite(controlPin, LOW); //Once the output pins have been set properly, pulse the control pin to update the servo.
     delay(7);
@@ -583,7 +583,7 @@ void Radio_Transmit(void) {
 
         if (buf[6] || buf[7] || buf[8]) {
           servoPowerFlag = true;
-          digitalWrite(servoPowerPin, servoPowerFlag);
+          digitalWrite(servoPowerPin, HIGH);
           digitalWrite(13, LOW);
         }
 
