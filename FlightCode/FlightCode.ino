@@ -392,50 +392,49 @@ void Record_Data(sensors_event_t event) { //Subroutine for saving sensor data to
 
   if (sdWorkingFlag) { //Only actually work with the SD card if the SD card is working
     dataLog = SD.open("datalog.txt", FILE_WRITE); //Open the file datalog.txt in write mode
-    delay(5);
+    dataLog.flush();
 
     if (dataLog) { //log data only if the file opened properly
       dataLog.println(""); //Start a new line
-      delay(5);
       for (int c = 0; c < 2; c++) {
         dataLog.print(timeData[c]);
         dataLog.print(","); //Separate data entries by a comma
       }
-      delay(5);
+      dataLog.flush();
       for (int c = 0; c < 3; c++) {
         dataLog.print(accelData[c]);
         dataLog.print(",");
       }
-      delay(5);
+      dataLog.flush();
       for (int c = 0; c < 3; c++) {
         dataLog.print(gyroData[c]);
         dataLog.print(",");
       }
-      delay(5);
+      dataLog.flush();
       for (int c = 0; c < 3; c++) {
         dataLog.print(baroData[c]);
         dataLog.print(",");
       }
-      delay(5);
+     dataLog.flush();
       dataLog.print(gpsLatitude);
       dataLog.print(",");
       dataLog.print(gpsLatDirect);
       dataLog.print(",");
-      delay(5);
+      dataLog.flush();
       dataLog.print(gpsLongitude);
       dataLog.print(",");
       dataLog.print(gpsLonDirect);
       dataLog.print(",");
-      delay(5);
+      dataLog.flush();
       dataLog.print(gpsAltitude);
       dataLog.print(",");
       dataLog.print(gpsFix);
       dataLog.print(",");
-      delay(5);
+      dataLog.flush();
       dataLog.print(gpsFixQuality);
       dataLog.print(",");
       dataLog.print(batteryLevel);
-      delay(5);
+      dataLog.flush();
 
       dataLog.close(); //Close the file //Necessary decrease in baud rate to prevent program from crashing when trying to access the SD card (memory overflow?)
     } //Any value lower than 50 ms runs a serious risk of rapid program freeze
