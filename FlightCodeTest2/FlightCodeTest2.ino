@@ -102,7 +102,7 @@ const int falling = burnout + 1;
 const int landed = falling + 1;
 int flightState; //Variable for switch case
 
-const int LIFTOFF_ACCEL_THRESHOLD = 38;
+const int LIFTOFF_ACCEL_THRESHOLD = 12;
 const int BURNOUT_ACCEL_THRESHOLD = 4; //Constants for flight staging calculation
 const int BURNOUT_BARO_THRESHOLD = 610; //Accel values are in m/s^2, baro values are in m, and time is in milliseconds
 const int BURNOUT_TIME_THRESHOLD = 5500;
@@ -383,53 +383,54 @@ if (gpsOnFlag) {
 
   if (sdWorkingFlag) { //Only actually work with the SD card if the SD card is working
     dataLog = SD.open("datalog.txt", FILE_WRITE); //Open the file datalog.txt in write mode
+    dataLog.flush();
 
     if (dataLog) { //log data only if the file opened properly
       dataLog.println(""); //Start a new line
-
       for (int c = 0; c < 2; c++) {
         dataLog.print(timeData[c]);
         dataLog.print(","); //Separate data entries by a comma
       }
-
+      dataLog.flush();
       for (int c = 0; c < 3; c++) {
         dataLog.print(accelData[c]);
         dataLog.print(",");
       }
-
+      dataLog.flush();
       for (int c = 0; c < 3; c++) {
         dataLog.print(gyroData[c]);
         dataLog.print(",");
       }
-
+      dataLog.flush();
       for (int c = 0; c < 3; c++) {
         dataLog.print(baroData[c]);
         dataLog.print(",");
       }
-
+     dataLog.flush();
       dataLog.print(gpsLatitude);
       dataLog.print(",");
       dataLog.print(gpsLatDirect);
       dataLog.print(",");
-    
+      dataLog.flush();
       dataLog.print(gpsLongitude);
       dataLog.print(",");
       dataLog.print(gpsLonDirect);
       dataLog.print(",");
-      
+      dataLog.flush();
       dataLog.print(gpsAltitude);
       dataLog.print(",");
       dataLog.print(gpsFix);
       dataLog.print(",");
-     
+      dataLog.flush();
       dataLog.print(gpsFixQuality);
       dataLog.print(",");
       dataLog.print(batteryLevel);
-      
-      delay(50);
-      dataLog.close(); //Close the file
-      //Necessary decrease in baud rate to prevent program from crashing when trying to access the SD card (memory overflow?)
-    } //Any value lower than 40 ms runs a serious risk of rapid program freeze
+      dataLog.flush();
+
+      dataLog.close(); //Close the file //Necessary decrease in baud rate to prevent program from crashing when trying to access the SD card (memory overflow?)
+    } //Any value lower than 50 ms runs a serious risk of rapid program freeze
+    //New development: problem gets worse the fuller the SD card is! Make sure to periodically wipe
+
 
   }
 
